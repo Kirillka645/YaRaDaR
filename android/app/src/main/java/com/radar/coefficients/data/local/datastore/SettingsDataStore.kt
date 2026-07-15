@@ -50,6 +50,8 @@ class SettingsDataStore @Inject constructor(
         val compactBubble = booleanPreferencesKey("compact_bubble")
         val shiftStart = longPreferencesKey("shift_start")
         val shiftZones = intPreferencesKey("shift_zones")
+        val showForecast = booleanPreferencesKey("show_forecast")
+        val highlightIgnite = booleanPreferencesKey("highlight_ignite")
     }
 
     val settingsFlow: Flow<UserSettings> = context.dataStore.data.map { it.toSettings() }
@@ -91,6 +93,8 @@ class SettingsDataStore @Inject constructor(
             prefs[Keys.compactBubble] = next.compactDriverBubble
             prefs[Keys.shiftStart] = next.shiftStartedAtEpochMs
             prefs[Keys.shiftZones] = next.shiftZonesChecked
+            prefs[Keys.showForecast] = next.showForecastAndOrders
+            prefs[Keys.highlightIgnite] = next.highlightPredictedIgnite
         }
     }
 
@@ -127,7 +131,9 @@ class SettingsDataStore @Inject constructor(
             showMoneyOnMap = this[Keys.showMoney] ?: true,
             compactDriverBubble = this[Keys.compactBubble] ?: false,
             shiftStartedAtEpochMs = this[Keys.shiftStart] ?: 0L,
-            shiftZonesChecked = this[Keys.shiftZones] ?: 0
+            shiftZonesChecked = this[Keys.shiftZones] ?: 0,
+            showForecastAndOrders = this[Keys.showForecast] ?: true,
+            highlightPredictedIgnite = this[Keys.highlightIgnite] ?: true
         )
     }
 }

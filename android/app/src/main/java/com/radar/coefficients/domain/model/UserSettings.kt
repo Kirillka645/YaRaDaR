@@ -35,7 +35,11 @@ data class UserSettings(
     val compactDriverBubble: Boolean = false,
     /** Счётчик смены: старт epoch ms, 0 = не начата. */
     val shiftStartedAtEpochMs: Long = 0L,
-    val shiftZonesChecked: Int = 0
+    val shiftZonesChecked: Int = 0,
+    /** Показывать прогноз кэфа и заказы по району */
+    val showForecastAndOrders: Boolean = true,
+    /** Подсвечивать зоны, где кэф «загорится» */
+    val highlightPredictedIgnite: Boolean = true
 ) {
     companion object {
         val DEFAULT_MAP_TARIFFS: Set<VehicleClass> = setOf(
@@ -49,7 +53,11 @@ data class UserSettings(
 enum class RadarSortMode {
     MAX_BENEFIT,
     HIGHEST_COEFFICIENT,
-    NEAREST
+    NEAREST,
+    /** Где кэф «загорится» / растёт */
+    FORECAST_IGNITE,
+    /** Больше заказов в районе */
+    MOST_ORDERS
 }
 
 enum class MapRadiusFilter(val km: Int, val labelRu: String) {

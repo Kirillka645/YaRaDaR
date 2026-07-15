@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.radar.coefficients.domain.model.ForecastTrend
 import com.radar.coefficients.domain.model.RadarSortMode
 import com.radar.coefficients.domain.util.DataStatusLabels
 import com.radar.coefficients.domain.util.MoneyFormatter
@@ -76,6 +77,8 @@ fun RadarScreen(
                 SortChip("Макс. выгода", RadarSortMode.MAX_BENEFIT, state.sortMode, viewModel::setSort)
                 SortChip("Высокий ×", RadarSortMode.HIGHEST_COEFFICIENT, state.sortMode, viewModel::setSort)
                 SortChip("Ближе", RadarSortMode.NEAREST, state.sortMode, viewModel::setSort)
+                SortChip("Загорится", RadarSortMode.FORECAST_IGNITE, state.sortMode, viewModel::setSort)
+                SortChip("Больше заказов", RadarSortMode.MOST_ORDERS, state.sortMode, viewModel::setSort)
             }
         }
 
@@ -151,6 +154,46 @@ fun RadarScreen(
                                     "Темп: " + MoneyFormatter.formatPerHour(hourly, currency, cityCur, cityCur),
                                     style = MaterialTheme.typography.labelLarge
                                 )
+                                Text(
+                                    "Жар района: ${score.zone.heatScore}/100",
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                                // заказы
+                                score.zone.orderStats?.let { o ->
+                                    Text(
+                                        "Заказы: ~${o.ordersLast15Min} / 15 мин · ~${o.ordersLastHour}/ч · сегодня ~${o.ordersToday}",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                // прогноз
+                                if (state.settings.showForecastAndOrders) {
+                                    score.zone.forecast?.let { f ->
+                                        val arrow = when (f.trend) {
+                                            ForecastTrend.RISING -> "↑"
+                                            ForecastTrend.FALLING -> "↓"
+                                            ForecastTrend.STABLE -> "→"
+                                        }
+                                        Text(
+                                            "Прогноз $arrow 15м ×${"%.1f".format(f.coefficientIn15Min)} · " +
+                                                "30м ×${"%.1f".format(f.coefficientIn30Min)} · " +
+                                                "60м ×${"%.1f".format(f.coefficientIn60Min)}",
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = when (f.trend) {
+                                                ForecastTrend.RISING -> MaterialTheme.colorScheme.primary
+                                                ForecastTrend.FALLING -> MaterialTheme.colorScheme.error
+                                                ForecastTrend.STABLE -> MaterialTheme.colorScheme.onSurface
+                                            }
+                                        )
+                                        f.minutesToIgnite?.let { m ->
+                                            if (m > 0) {
+                                                Text(
+                                                    "«Загорится» через ~$m мин (p=${(f.igniteProbability30Min * 100).toInt()}%)",
+                                                    style = MaterialTheme.typography.labelLarge
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                                 // кэфы по тарифам
                                 val byClass = score.zone.coefficientsByClass
                                 if (byClass.isNotEmpty()) {

@@ -36,6 +36,39 @@ enum class DataStatus {
     NONE
 }
 
+enum class ForecastTrend {
+    RISING,
+    FALLING,
+    STABLE
+}
+
+/**
+ * Прогноз спроса (модель YaRaDaR, не данные Яндекса).
+ * Показывает, куда «может загореть» кэф через N минут.
+ */
+data class ZoneForecast(
+    val coefficientIn15Min: Double,
+    val coefficientIn30Min: Double,
+    val coefficientIn60Min: Double,
+    val trend: ForecastTrend,
+    /** Вероятность, что кэф ≥ порога через 30 мин (0..1) */
+    val igniteProbability30Min: Double,
+    /** Через сколько минут ожидается рост выше текущего (null = не ожидается) */
+    val minutesToIgnite: Int?,
+    val confidence: Double,
+    val summaryRu: String
+)
+
+/** Оценка заказов по району (модель, ориентир). */
+data class DistrictOrderStats(
+    val ordersLast15Min: Int,
+    val ordersLastHour: Int,
+    val ordersToday: Int,
+    val avgOrdersPerHour: Double,
+    val peakHourLocal: Int,
+    val demandPressure: Double
+)
+
 data class DemandZone(
     val id: String,
     val cityId: String,
@@ -58,7 +91,12 @@ data class DemandZone(
     val availableVehicleClasses: List<VehicleClass>,
     val survivalProbability: Double? = null,
     /** Коэффициенты по тарифам: Эконом, Комфорт, Детский… */
-    val coefficientsByClass: Map<VehicleClass, Double> = emptyMap()
+    val coefficientsByClass: Map<VehicleClass, Double> = emptyMap(),
+    val forecast: ZoneForecast? = null,
+    val orderStats: DistrictOrderStats? = null,
+    /** 0..100 — «жар» района (кэф + заказы + прогноз) */
+    val heatScore: Int = 0,
+    val districtKind: String = "generic"
 ) {
     fun coefficientFor(vehicleClass: VehicleClass): Double =
         coefficientsByClass[vehicleClass] ?: coefficient
@@ -68,6 +106,11 @@ data class DemandZone(
 
     fun isStale(nowMs: Long = System.currentTimeMillis(), maxAgeMs: Long = 10 * 60_000L): Boolean =
         isExpired(nowMs) || (nowMs - fetchedAtEpochMs) > maxAgeMs
+
+    fun willLikelyIgnite(minCoef: Double = 1.5): Boolean {
+        val f = forecast ?: return false
+        return f.coefficientIn30Min >= minCoef && f.igniteProbability30Min >= 0.55
+    }
 
     fun dataStatus(nowMs: Long = System.currentTimeMillis()): DataStatus = when {
         isDemo || sourceType == SourceType.DEMO_PROVIDER -> DataStatus.DEMO

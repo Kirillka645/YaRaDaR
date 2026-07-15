@@ -38,6 +38,8 @@ fun OsmMapContent(
     cameraEpoch: Int,
     driverLocation: GeoPoint?,
     driverTariffLabels: List<TariffCoefLabel>,
+    highlightPredictedIgnite: Boolean = true,
+    minCoefForHot: Double = 1.5,
     onZoneClick: (DemandZone) -> Unit,
     onMapClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -75,7 +77,7 @@ fun OsmMapContent(
         mapView.controller.animateTo(OsmGeoPoint(center.latitude, center.longitude))
     }
 
-    LaunchedEffect(zones, driverLocation, driverTariffLabels, onZoneClick) {
+    LaunchedEffect(zones, driverLocation, driverTariffLabels, highlightPredictedIgnite, onZoneClick) {
         mapView.overlays.clear()
         mapView.overlays.add(
             MapEventsOverlay(object : MapEventsReceiver {
@@ -88,19 +90,24 @@ fun OsmMapContent(
         )
 
         zones.forEach { zone ->
+            val willIgnite = highlightPredictedIgnite && zone.willLikelyIgnite(minCoefForHot)
             val color = coefficientColor(zone.coefficient)
             val fill = AndroidColor.argb(
-                if (zone.isStale() || zone.isDemo) 70 else 120,
+                if (zone.isStale() || zone.isDemo) 60 else if (willIgnite) 90 else 120,
                 (color.red * 255).roundToInt(),
                 (color.green * 255).roundToInt(),
                 (color.blue * 255).roundToInt()
             )
-            val stroke = AndroidColor.argb(
-                230,
-                (color.red * 255).roundToInt(),
-                (color.green * 255).roundToInt(),
-                (color.blue * 255).roundToInt()
-            )
+            val stroke = if (willIgnite) {
+                AndroidColor.argb(255, 255, 193, 7) // янтарь — прогноз «загорится»
+            } else {
+                AndroidColor.argb(
+                    230,
+                    (color.red * 255).roundToInt(),
+                    (color.green * 255).roundToInt(),
+                    (color.blue * 255).roundToInt()
+                )
+            }
 
             val poly = Polygon(mapView).apply {
                 if (zone.polygon.size >= 3) {
@@ -110,7 +117,14 @@ fun OsmMapContent(
                 }
                 fillPaint.color = fill
                 outlinePaint.color = stroke
-                outlinePaint.strokeWidth = if (zone.coefficient >= 2.0) 8f else 5f
+                outlinePaint.strokeWidth = when {
+                    willIgnite -> 10f
+                    zone.coefficient >= 2.0 -> 8f
+                    else -> 5f
+                }
+                if (willIgnite) {
+                    outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(18f, 12f), 0f)
+                }
                 setOnClickListener { _, _, _ ->
                     onZoneClick(zone)
                     true
@@ -118,12 +132,17 @@ fun OsmMapContent(
             }
             mapView.overlays.add(poly)
 
+            val ordersHint = zone.orderStats?.let { " · ${it.ordersLastHour}/ч" }.orEmpty()
+            val forecastHint = zone.forecast?.let {
+                " →×${"%.1f".format(it.coefficientIn30Min)}"
+            }.orEmpty()
             val marker = Marker(mapView).apply {
                 position = OsmGeoPoint(zone.center.latitude, zone.center.longitude)
-                title = "×${"%.1f".format(zone.coefficient)}"
-                snippet = zone.districtName
+                title = "×${"%.1f".format(zone.coefficient)}$forecastHint"
+                snippet = zone.districtName + ordersHint +
+                    if (willIgnite) " · прогноз: загорится" else ""
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                icon = makeDot(stroke)
+                icon = makeDot(if (willIgnite) AndroidColor.parseColor("#FFC107") else stroke)
                 setOnMarkerClickListener { _, _ ->
                     onZoneClick(zone)
                     true

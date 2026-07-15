@@ -138,6 +138,8 @@ fun MapScreen(
             cameraEpoch = cameraEpoch,
             driverLocation = state.driverLocation ?: state.city?.center,
             driverTariffLabels = state.driverTariffLabels,
+            highlightPredictedIgnite = state.settings.highlightPredictedIgnite,
+            minCoefForHot = state.settings.minCoefficientAlert,
             onZoneClick = { viewModel.selectZone(it) },
             onMapClick = { viewModel.selectZone(null) },
             modifier = Modifier.fillMaxSize()
@@ -310,6 +312,40 @@ fun MapScreen(
                                 .sortedBy { it.key.ordinal }
                                 .joinToString(" · ") { "${it.key.shortLabel} ×${"%.1f".format(it.value)}" }
                         )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    Text("Жар: ${zone.heatScore}/100", fontWeight = FontWeight.SemiBold)
+                    if (state.settings.showForecastAndOrders) {
+                        zone.orderStats?.let { o ->
+                            Text(
+                                "Заказы в районе: ~${o.ordersLast15Min} за 15 мин · " +
+                                    "~${o.ordersLastHour}/ч · сегодня ~${o.ordersToday}"
+                            )
+                            Text("Пик обычно около ${o.peakHourLocal}:00 (модель)")
+                        }
+                        zone.forecast?.let { f ->
+                            Spacer(Modifier.height(6.dp))
+                            Text("Прогноз кэфа (модель)", fontWeight = FontWeight.Bold)
+                            Text(
+                                "15 мин → ×${"%.1f".format(f.coefficientIn15Min)} · " +
+                                    "30 мин → ×${"%.1f".format(f.coefficientIn30Min)} · " +
+                                    "60 мин → ×${"%.1f".format(f.coefficientIn60Min)}"
+                            )
+                            Text(f.summaryRu, color = MaterialTheme.colorScheme.primary)
+                            f.minutesToIgnite?.let { m ->
+                                if (m > 0) {
+                                    Text(
+                                        "Ожидается «зажжение» через ~$m мин " +
+                                            "(вероятность ${(f.igniteProbability30Min * 100).toInt()}%)",
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                            Text(
+                                "Прогноз ориентировочный, не данные Яндекса",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                         Spacer(Modifier.height(8.dp))
                     }
                     state.selectedScore?.let { score ->

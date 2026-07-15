@@ -181,6 +181,28 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                     onCheckedChange = { v -> viewModel.update { it.copy(compactDriverBubble = v) } }
                 )
             }
+            RowItem("Прогноз и заказы") {
+                Switch(
+                    checked = settings.showForecastAndOrders,
+                    onCheckedChange = { v -> viewModel.update { it.copy(showForecastAndOrders = v) } }
+                )
+            }
+            Text(
+                "Где «загорится» кэф + заказы по району (модель, не Яндекс)",
+                style = MaterialTheme.typography.bodySmall
+            )
+            RowItem("Подсветка прогноза") {
+                Switch(
+                    checked = settings.highlightPredictedIgnite,
+                    onCheckedChange = { v ->
+                        viewModel.update { it.copy(highlightPredictedIgnite = v) }
+                    }
+                )
+            }
+            Text(
+                "Жёлтый пунктир — зоны, где кэф может вырасти",
+                style = MaterialTheme.typography.bodySmall
+            )
 
             Spacer(Modifier.height(16.dp))
             Section("Смена")
