@@ -48,6 +48,9 @@ object DataStatusLabels {
         "Приложение не является официальным продуктом Яндекса"
     const val DEMO_BANNER =
         "Демонстрационные данные — не использовать для рабочих решений"
+    const val GROUNDED_MODEL =
+        "Кэф из открытых данных: погода (Open-Meteo) + POI (OpenStreetMap) + час/день. Не Яндекс Про."
+
     const val REAL_UNAVAILABLE =
         "Реальные коэффициенты для этого города сейчас недоступны"
     const val COEF_MAY_CHANGE =

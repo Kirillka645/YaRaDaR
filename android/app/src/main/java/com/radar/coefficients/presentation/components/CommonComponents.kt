@@ -147,7 +147,7 @@ fun CoefficientBadge(coefficient: Double, large: Boolean = false) {
 }
 
 @Composable
-fun DisclaimerBanner(text: String = DataStatusLabels.NOT_OFFICIAL) {
+fun DisclaimerBanner(text: String = DataStatusLabels.GROUNDED_MODEL) {
     Surface(
         color = MaterialTheme.colorScheme.secondaryContainer,
         modifier = Modifier.fillMaxWidth()

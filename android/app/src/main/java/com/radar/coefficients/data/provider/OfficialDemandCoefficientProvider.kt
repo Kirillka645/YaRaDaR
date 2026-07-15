@@ -1,6 +1,8 @@
 package com.radar.coefficients.data.provider
 
 import com.radar.coefficients.BuildConfig
+import com.radar.coefficients.data.context.OpenMeteoClient
+import com.radar.coefficients.data.context.OsmPoiContextClient
 import com.radar.coefficients.data.geocoder.StreetLabelResolver
 import com.radar.coefficients.data.remote.api.DemandApi
 import com.radar.coefficients.data.remote.dto.toDomain
@@ -12,28 +14,31 @@ import com.radar.coefficients.domain.model.ProviderConnectionStatus
 import com.radar.coefficients.domain.model.ProviderStatus
 import com.radar.coefficients.domain.model.SourceType
 import com.radar.coefficients.domain.provider.DemandCoefficientProvider
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * YaRaDaR Official API provider.
- * 1) Tries remote backend (DEMAND_API_BASE_URL)
- * 2) Falls back to embedded [YaRadarOfficialEngine] so APK works offline
- * 3) Подписывает зоны **улицей в центре** (Geocoder / Nominatim)
+ * 1) Remote backend (если задан)
+ * 2) Grounded engine: **Open-Meteo + OSM Overpass + час/день**
+ * 3) Улицы: Geocoder / Nominatim
  */
 @Singleton
 class OfficialDemandCoefficientProvider @Inject constructor(
     private val api: DemandApi,
-    private val streetLabels: StreetLabelResolver
+    private val streetLabels: StreetLabelResolver,
+    private val openMeteo: OpenMeteoClient,
+    private val osmPoi: OsmPoiContextClient
 ) : DemandCoefficientProvider {
 
     override val providerId: String = "official"
-    override val displayName: String = "YaRaDaR Official API"
+    override val displayName: String = "YaRaDaR Grounded (погода+OSM)"
 
     private var lastUpdated: Long? = null
     private var lastError: String? = null
@@ -101,13 +106,13 @@ class OfficialDemandCoefficientProvider @Inject constructor(
             usingRemote = false
             val city = cityRegistry[cityId]
             if (city != null) {
-                YaRadarOfficialEngine.generateZones(city)
+                withContext(Dispatchers.IO) { generateGrounded(city) }
             } else {
                 emptyList()
             }
         }
 
-        // В центре каждой зоны — реальная улица (не «Центр · Город»)
+        // В центре каждой зоны — реальная улица
         val zones = runCatching { streetLabels.enrichZones(raw) }.getOrDefault(raw)
 
         zoneCache[cityId] = zones
@@ -148,4 +153,11 @@ class OfficialDemandCoefficientProvider @Inject constructor(
 
     override suspend fun isRealTimeDataAvailable(cityId: String): Boolean =
         cityRegistry.containsKey(cityId) || zoneCache[cityId].orEmpty().isNotEmpty()
+
+    private fun generateGrounded(city: City): List<DemandZone> {
+        val weather = openMeteo.fetch(city.center)
+        val centers = YaRadarOfficialEngine.anchorCenters(city).map { it.first }
+        val poi = osmPoi.signalsFor(city.id, centers, radiusKm = 0.9)
+        return YaRadarOfficialEngine.generateZones(city, weather, poi)
+    }
 }
