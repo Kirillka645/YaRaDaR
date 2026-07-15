@@ -52,14 +52,22 @@ cd android
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Опционально в `android/local.properties`:
+### Карты
+
+| Что | Как |
+|-----|-----|
+| **Карта в приложении** | **OpenStreetMap** — **без API-ключа**, работает сразу |
+| **Маршрут** | открывается в **Яндекс Картах** (приложение или сайт) |
+| **Google Maps** | убраны (без ключа Google карта пустая) |
+
+Встроенный Yandex MapKit раздувает APK >100 MB (лимит GitHub), поэтому в UI карта — OSM, а навигация — через Яндекс.
+
+Города: **Кострома**, Ярославль, Иваново, Москва, СПб и др.
 
 ```properties
-MAPS_API_KEY=your_google_maps_key
+# android/local.properties (опционально)
 DEMAND_API_BASE_URL=http://10.0.2.2:8080
 ```
-
-Без Maps key карта может показывать пустые тайлы; зоны и логика работают.
 
 ## Архитектура
 

@@ -12,7 +12,8 @@ captures/
 *.log
 *.jks
 *.keystore
-# Keep published APK under releases/
 android/app/build/
 backend/build/
-!releases/**/*.apk
+# APK слишком большой для git (>100MB с MapKit) — только GitHub Releases
+releases/*.apk
+*.apk

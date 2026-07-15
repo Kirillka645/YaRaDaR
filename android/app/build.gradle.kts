@@ -33,9 +33,9 @@ android {
         buildConfigField("String", "DEMAND_API_TOKEN", "\"${prop("DEMAND_API_TOKEN")}\"")
         buildConfigField("boolean", "DEMO_MODE_DEFAULT", "false")
 
-        // Optional Google Maps key from local.properties (maps work without tiles if empty in emulator limited mode)
-        val mapsKey = prop("MAPS_API_KEY", "YOUR_MAPS_API_KEY")
-        manifestPlaceholders["MAPS_API_KEY"] = mapsKey
+        // Карта: OpenStreetMap (без ключа). Навигация — через приложение Яндекс Карты.
+        // Встраиваемый MapKit раздувает APK >100MB; при необходимости можно подключить отдельно.
+        buildConfigField("boolean", "USE_YANDEX_MAPKIT", "false")
     }
 
     buildTypes {
@@ -114,9 +114,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
 
     implementation("com.google.android.gms:play-services-location:21.3.0")
-    implementation("com.google.android.gms:play-services-maps:19.0.0")
-    implementation("com.google.maps.android:maps-compose:6.2.1")
-    implementation("com.google.maps.android:maps-compose-utils:6.2.1")
+
+    // Карта без API-ключа (OpenStreetMap) — работает сразу
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
+
 
     implementation("androidx.compose.ui:ui-graphics")
 

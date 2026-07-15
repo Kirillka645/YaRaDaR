@@ -1,0 +1,159 @@
+package com.radar.coefficients.presentation.map
+
+import android.graphics.Color as AndroidColor
+import android.graphics.Paint
+import android.graphics.drawable.ShapeDrawable
+import android.graphics.drawable.shapes.OvalShape
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.radar.coefficients.domain.model.DemandZone
+import com.radar.coefficients.domain.model.GeoPoint
+import com.radar.coefficients.presentation.theme.coefficientColor
+import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint as OsmGeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.MapEventsOverlay
+import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polygon
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
+
+/**
+ * OpenStreetMap fallback — карты работают без API-ключа.
+ * Используется, если не задан YANDEX_MAPKIT_API_KEY.
+ */
+@Composable
+fun OsmMapContent(
+    center: GeoPoint,
+    zoom: Double,
+    zones: List<DemandZone>,
+    cameraEpoch: Int,
+    onZoneClick: (DemandZone) -> Unit,
+    onMapClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val mapView = remember {
+        MapView(context).apply {
+            setTileSource(TileSourceFactory.MAPNIK)
+            setMultiTouchControls(true)
+            controller.setZoom(zoom)
+            controller.setCenter(OsmGeoPoint(center.latitude, center.longitude))
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, mapView) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> mapView.onResume()
+                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        mapView.onResume()
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            mapView.onPause()
+            mapView.onDetach()
+        }
+    }
+
+    LaunchedEffect(cameraEpoch, center.latitude, center.longitude, zoom) {
+        mapView.controller.setZoom(zoom)
+        mapView.controller.animateTo(OsmGeoPoint(center.latitude, center.longitude))
+    }
+
+    LaunchedEffect(zones, onZoneClick) {
+        mapView.overlays.clear()
+        mapView.overlays.add(
+            MapEventsOverlay(object : MapEventsReceiver {
+                override fun singleTapConfirmedHelper(p: OsmGeoPoint?): Boolean {
+                    onMapClick()
+                    return true
+                }
+                override fun longPressHelper(p: OsmGeoPoint?): Boolean = false
+            })
+        )
+
+        zones.forEach { zone ->
+            val color = coefficientColor(zone.coefficient)
+            val fill = AndroidColor.argb(
+                if (zone.isStale() || zone.isDemo) 70 else 120,
+                (color.red * 255).roundToInt(),
+                (color.green * 255).roundToInt(),
+                (color.blue * 255).roundToInt()
+            )
+            val stroke = AndroidColor.argb(
+                230,
+                (color.red * 255).roundToInt(),
+                (color.green * 255).roundToInt(),
+                (color.blue * 255).roundToInt()
+            )
+
+            val poly = Polygon(mapView).apply {
+                if (zone.polygon.size >= 3) {
+                    points = zone.polygon.map { OsmGeoPoint(it.latitude, it.longitude) }
+                } else {
+                    points = circlePoints(zone.center.latitude, zone.center.longitude, 900.0)
+                }
+                fillPaint.color = fill
+                outlinePaint.color = stroke
+                outlinePaint.strokeWidth = if (zone.coefficient >= 2.0) 8f else 5f
+                setOnClickListener { _, _, _ ->
+                    onZoneClick(zone)
+                    true
+                }
+            }
+            mapView.overlays.add(poly)
+
+            val marker = Marker(mapView).apply {
+                position = OsmGeoPoint(zone.center.latitude, zone.center.longitude)
+                title = "×${"%.1f".format(zone.coefficient)}"
+                snippet = zone.districtName
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                icon = makeDot(context, stroke)
+                setOnMarkerClickListener { _, _ ->
+                    onZoneClick(zone)
+                    true
+                }
+            }
+            mapView.overlays.add(marker)
+        }
+        mapView.invalidate()
+    }
+
+    AndroidView(
+        factory = { mapView },
+        modifier = modifier.fillMaxSize()
+    )
+}
+
+private fun makeDot(context: android.content.Context, color: Int) =
+    ShapeDrawable(OvalShape()).apply {
+        intrinsicWidth = 48
+        intrinsicHeight = 48
+        paint.color = color
+        paint.style = Paint.Style.FILL
+    }
+
+private fun circlePoints(lat: Double, lon: Double, radiusM: Double, steps: Int = 36): List<OsmGeoPoint> {
+    val rLat = radiusM / 111_320.0
+    val rLon = radiusM / (111_320.0 * cos(Math.toRadians(lat)).coerceAtLeast(0.2))
+    return (0 until steps).map { i ->
+        val a = 2.0 * Math.PI * i / steps
+        OsmGeoPoint(lat + rLat * sin(a), lon + rLon * cos(a))
+    }
+}

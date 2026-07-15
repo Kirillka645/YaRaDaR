@@ -40,10 +40,11 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -51,17 +52,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.Circle
-import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.MapProperties
-import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.Marker
-import com.google.maps.android.compose.MarkerState
-import com.google.maps.android.compose.Polygon
-import com.google.maps.android.compose.rememberCameraPositionState
+import com.radar.coefficients.domain.model.GeoPoint
 import com.radar.coefficients.domain.model.MapRadiusFilter
 import com.radar.coefficients.domain.util.DataStatusLabels
 import com.radar.coefficients.presentation.common.UiMessage
@@ -70,7 +61,6 @@ import com.radar.coefficients.presentation.components.DisclaimerBanner
 import com.radar.coefficients.presentation.components.SourceMetaRow
 import com.radar.coefficients.presentation.components.StatePanel
 import com.radar.coefficients.presentation.theme.TouchTargetMin
-import com.radar.coefficients.presentation.theme.coefficientColor
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -83,6 +73,8 @@ fun MapScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var cameraEpoch by remember { mutableIntStateOf(0) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
@@ -105,71 +97,25 @@ fun MapScreen(
         }
     }
 
-    val cityCenter = state.city?.center
-    val start = state.driverLocation ?: cityCenter
-    val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(
-            LatLng(start?.latitude ?: 55.75, start?.longitude ?: 37.62),
-            11f
-        )
+    LaunchedEffect(state.city?.id, state.driverLocation) {
+        cameraEpoch++
     }
 
-    LaunchedEffect(state.city?.id, state.driverLocation) {
-        val target = state.driverLocation ?: state.city?.center ?: return@LaunchedEffect
-        cameraPositionState.animate(
-            CameraUpdateFactory.newLatLngZoom(LatLng(target.latitude, target.longitude), 11.5f)
-        )
-    }
+    val mapCenter = state.driverLocation
+        ?: state.city?.center
+        ?: GeoPoint(57.7679, 40.9269) // Кострома
 
     Box(modifier = Modifier.fillMaxSize()) {
-        GoogleMap(
-            modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState,
-            properties = MapProperties(
-                isMyLocationEnabled = state.driverLocation != null,
-                isTrafficEnabled = state.showTraffic
-            ),
-            uiSettings = MapUiSettings(
-                zoomControlsEnabled = false,
-                myLocationButtonEnabled = false,
-                compassEnabled = true
-            ),
-            onMapClick = { viewModel.selectZone(null) }
-        ) {
-            state.filteredZones.forEach { zone ->
-                val color = coefficientColor(zone.coefficient)
-                val alpha = if (zone.isStale() || zone.isDemo) 0.28f else 0.45f
-                val points = zone.polygon.map { LatLng(it.latitude, it.longitude) }
-                if (points.size >= 3) {
-                    Polygon(
-                        points = points,
-                        fillColor = color.copy(alpha = alpha),
-                        strokeColor = color.copy(alpha = 0.95f),
-                        strokeWidth = if (zone.coefficient >= 2.0) 8f else 5f,
-                        clickable = true,
-                        onClick = { viewModel.selectZone(zone) }
-                    )
-                } else {
-                    Circle(
-                        center = LatLng(zone.center.latitude, zone.center.longitude),
-                        radius = 900.0,
-                        fillColor = color.copy(alpha = alpha),
-                        strokeColor = color,
-                        clickable = true,
-                        onClick = { viewModel.selectZone(zone) }
-                    )
-                }
-                Marker(
-                    state = MarkerState(LatLng(zone.center.latitude, zone.center.longitude)),
-                    title = "×${zone.coefficient}",
-                    snippet = zone.districtName,
-                    onClick = {
-                        viewModel.selectZone(zone)
-                        true
-                    }
-                )
-            }
-        }
+        // OpenStreetMap — без API-ключа, карты видны сразу
+        OsmMapContent(
+            center = mapCenter,
+            zoom = 12.0,
+            zones = state.filteredZones,
+            cameraEpoch = cameraEpoch,
+            onZoneClick = { viewModel.selectZone(it) },
+            onMapClick = { viewModel.selectZone(null) },
+            modifier = Modifier.fillMaxSize()
+        )
 
         Column(
             modifier = Modifier
@@ -203,6 +149,11 @@ fun MapScreen(
                                 },
                                 style = MaterialTheme.typography.bodyMedium
                             )
+                            Text(
+                                text = "Карта: OpenStreetMap · маршрут: Яндекс Карты",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
                         TextButton(onClick = onOpenCityPicker) {
                             Text("Сменить", fontSize = 16.sp)
@@ -230,10 +181,15 @@ fun MapScreen(
                         }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Пробки", fontSize = 16.sp, modifier = Modifier.weight(1f))
+                        Text(
+                            "Слой пробок (в OSM недоступен)",
+                            fontSize = 15.sp,
+                            modifier = Modifier.weight(1f)
+                        )
                         Switch(
                             checked = state.showTraffic,
-                            onCheckedChange = viewModel::toggleTraffic
+                            onCheckedChange = viewModel::toggleTraffic,
+                            enabled = false
                         )
                     }
                 }
@@ -260,9 +216,7 @@ fun MapScreen(
             FloatingActionButton(
                 onClick = {
                     viewModel.centerOnDriver()
-                    state.driverLocation?.let {
-                        // camera handled by LaunchedEffect
-                    }
+                    cameraEpoch++
                 },
                 modifier = Modifier.size(TouchTargetMin),
                 shape = CircleShape
@@ -311,14 +265,8 @@ fun MapScreen(
                         )
                         state.selectedFareBase?.let { base ->
                             Text("Без коэффициента: ${base.range.min.toInt()}–${base.range.max.toInt()} ${base.range.currencyCode}")
-                            val diffMin = fare.range.min - base.range.max
-                            val diffMax = fare.range.max - base.range.min
-                            Text("Расчётная разница: +${diffMin.toInt().coerceAtLeast(0)}–${diffMax.toInt().coerceAtLeast(0)} ${fare.range.currencyCode}")
                         }
                         Text(fare.disclaimerRu, style = MaterialTheme.typography.bodySmall)
-                    }
-                    zone.survivalProbability?.let {
-                        Text("Вероятность сохранения зоны: ${(it * 100).toInt()}%")
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(
@@ -326,36 +274,16 @@ fun MapScreen(
                         color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.SemiBold
                     )
-                    state.selectedScore?.calculationBreakdown?.let { lines ->
-                        Spacer(Modifier.height(12.dp))
-                        Text("Как рассчитано", fontWeight = FontWeight.Bold)
-                        lines.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
-                    }
                     Spacer(Modifier.height(16.dp))
                     Button(
                         onClick = {
-                            val uri = Uri.parse(
-                                "google.navigation:q=${zone.center.latitude},${zone.center.longitude}"
-                            )
-                            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                                setPackage("com.google.android.apps.maps")
-                            }
-                            runCatching { context.startActivity(intent) }.onFailure {
-                                context.startActivity(
-                                    Intent(
-                                        Intent.ACTION_VIEW,
-                                        Uri.parse(
-                                            "https://www.google.com/maps/dir/?api=1&destination=${zone.center.latitude},${zone.center.longitude}"
-                                        )
-                                    )
-                                )
-                            }
+                            openYandexRoute(context, zone.center.latitude, zone.center.longitude)
                         },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(TouchTargetMin)
                     ) {
-                        Text("Построить маршрут", fontSize = 18.sp)
+                        Text("Маршрут в Яндекс Картах", fontSize = 18.sp)
                     }
                     Spacer(Modifier.height(24.dp))
                 }
@@ -366,20 +294,28 @@ fun MapScreen(
             AlertDialog(
                 onDismissRequest = { viewModel.confirmCitySwitch(false) },
                 title = { Text("Сменить город?") },
-                text = {
-                    Text("Похоже, вы в городе ${pending.name}. Переключить зоны и тарифы?")
-                },
+                text = { Text("Похоже, вы в городе ${pending.name}. Переключить зоны и тарифы?") },
                 confirmButton = {
-                    TextButton(onClick = { viewModel.confirmCitySwitch(true) }) {
-                        Text("Да")
-                    }
+                    TextButton(onClick = { viewModel.confirmCitySwitch(true) }) { Text("Да") }
                 },
                 dismissButton = {
-                    TextButton(onClick = { viewModel.confirmCitySwitch(false) }) {
-                        Text("Нет")
-                    }
+                    TextButton(onClick = { viewModel.confirmCitySwitch(false) }) { Text("Нет") }
                 }
             )
         }
+    }
+}
+
+private fun openYandexRoute(context: android.content.Context, lat: Double, lon: Double) {
+    val yandexApp = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("yandexmaps://maps.yandex.ru/?rtext=~$lat,$lon&rtt=auto")
+    )
+    val yandexWeb = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("https://yandex.ru/maps/?rtext=~$lat%2C$lon&rtt=auto")
+    )
+    runCatching { context.startActivity(yandexApp) }.onFailure {
+        context.startActivity(yandexWeb)
     }
 }
