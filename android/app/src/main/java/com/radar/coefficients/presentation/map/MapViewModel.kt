@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
+import com.radar.coefficients.data.geocoder.StreetLabelResolver
 import com.radar.coefficients.data.provider.TariffFareEstimateProvider
 import com.radar.coefficients.domain.model.AlertThresholdMode
 import com.radar.coefficients.domain.model.City
@@ -74,7 +75,8 @@ class MapViewModel @Inject constructor(
     private val cityRepository: CityRepository,
     private val settingsRepository: SettingsRepository,
     private val routeRepository: RouteRepository,
-    private val fareProvider: TariffFareEstimateProvider
+    private val fareProvider: TariffFareEstimateProvider,
+    private val streetLabels: StreetLabelResolver
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(MapUiState())
@@ -348,21 +350,27 @@ class MapViewModel @Inject constructor(
 
     /** Долгое нажатие / тап «поставить метку» — кэф + ₽ в этой точке. */
     fun placePin(point: GeoPoint) {
-        val s = _state.value
-        val zones = s.zones.ifEmpty { s.filteredZones }
-        val pin = recomputePin(point, zones, s.settings.mapVisibleTariffs)
-        _state.update {
-            it.copy(
-                pinLocation = point,
-                pinTariffLabels = pin.labels,
-                pinDistrictName = pin.district,
-                pinEconomyCoef = pin.coef,
-                pinExtraRub = pin.extra,
-                selectedZone = null,
-                selectedScore = null,
-                selectedFare = null,
-                selectedFareBase = null
-            )
+        viewModelScope.launch {
+            val s = _state.value
+            val zones = s.zones.ifEmpty { s.filteredZones }
+            val pin = recomputePin(point, zones, s.settings.mapVisibleTariffs)
+            // Улица именно в точке метки (центр «пробника»)
+            val street = runCatching {
+                streetLabels.labelAt(point, fallback = pin.district ?: "Метка")
+            }.getOrDefault(pin.district ?: "Метка")
+            _state.update {
+                it.copy(
+                    pinLocation = point,
+                    pinTariffLabels = pin.labels,
+                    pinDistrictName = street,
+                    pinEconomyCoef = pin.coef,
+                    pinExtraRub = pin.extra,
+                    selectedZone = null,
+                    selectedScore = null,
+                    selectedFare = null,
+                    selectedFareBase = null
+                )
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 package com.radar.coefficients.data.provider
 
 import com.radar.coefficients.BuildConfig
+import com.radar.coefficients.data.geocoder.StreetLabelResolver
 import com.radar.coefficients.data.remote.api.DemandApi
 import com.radar.coefficients.data.remote.dto.toDomain
 import com.radar.coefficients.domain.model.City
@@ -23,10 +24,12 @@ import javax.inject.Singleton
  * YaRaDaR Official API provider.
  * 1) Tries remote backend (DEMAND_API_BASE_URL)
  * 2) Falls back to embedded [YaRadarOfficialEngine] so APK works offline
+ * 3) Подписывает зоны **улицей в центре** (Geocoder / Nominatim)
  */
 @Singleton
 class OfficialDemandCoefficientProvider @Inject constructor(
-    private val api: DemandApi
+    private val api: DemandApi,
+    private val streetLabels: StreetLabelResolver
 ) : DemandCoefficientProvider {
 
     override val providerId: String = "official"
@@ -90,7 +93,7 @@ class OfficialDemandCoefficientProvider @Inject constructor(
             ).map { it.toDomain() }
         }.onFailure { lastError = it.message }.getOrNull()
 
-        val zones = if (!remote.isNullOrEmpty()) {
+        val raw = if (!remote.isNullOrEmpty()) {
             usingRemote = true
             lastError = null
             remote
@@ -103,6 +106,9 @@ class OfficialDemandCoefficientProvider @Inject constructor(
                 emptyList()
             }
         }
+
+        // В центре каждой зоны — реальная улица (не «Центр · Город»)
+        val zones = runCatching { streetLabels.enrichZones(raw) }.getOrDefault(raw)
 
         zoneCache[cityId] = zones
         lastUpdated = System.currentTimeMillis()

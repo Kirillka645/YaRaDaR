@@ -82,7 +82,8 @@ object YaRadarOfficialEngine {
             DemandZone(
                 id = "yrd-${city.id}-${profile.kind}-$window",
                 cityId = city.id,
-                districtName = "${profile.labelRu} · ${city.name}",
+                // Временное имя; StreetLabelResolver заменит на улицу в центре зоны
+                districtName = profile.labelRu,
                 center = center,
                 polygon = GeoMath.regularPolygon(center, radius),
                 coefficient = coef,

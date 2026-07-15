@@ -1,5 +1,6 @@
 package com.radar.coefficients.data.provider
 
+import com.radar.coefficients.data.geocoder.StreetLabelResolver
 import com.radar.coefficients.domain.model.City
 import com.radar.coefficients.domain.model.CityDataAvailability
 import com.radar.coefficients.domain.model.CoefficientType
@@ -30,7 +31,9 @@ import kotlin.random.Random
  * All values are explicitly marked isDemo=true / isRealData=false.
  */
 @Singleton
-class DemoDemandCoefficientProvider @Inject constructor() : DemandCoefficientProvider {
+class DemoDemandCoefficientProvider @Inject constructor(
+    private val streetLabels: StreetLabelResolver
+) : DemandCoefficientProvider {
 
     override val providerId: String = "demo"
     override val displayName: String = "Демонстрационный поставщик"
@@ -62,11 +65,12 @@ class DemoDemandCoefficientProvider @Inject constructor() : DemandCoefficientPro
     override suspend fun getDemandZones(cityId: String, mapBounds: GeoBounds?): List<DemandZone> {
         delay(350)
         val city = cityRegistry[cityId]
-        val zones = if (city != null) {
+        val raw = if (city != null) {
             generateForCity(city)
         } else {
             emptyList()
         }
+        val zones = runCatching { streetLabels.enrichZones(raw) }.getOrDefault(raw)
         cache[cityId] = zones
         lastUpdated = System.currentTimeMillis()
         flows.getOrPut(cityId) { MutableStateFlow(zones) }.value = zones
@@ -133,7 +137,7 @@ class DemoDemandCoefficientProvider @Inject constructor() : DemandCoefficientPro
             DemandZone(
                 id = "demo-${city.id}-$i-${UUID.nameUUIDFromBytes("${city.id}-$i".toByteArray())}",
                 cityId = city.id,
-                districtName = "${districtHints[i % districtHints.size]} · ${city.name}",
+                districtName = districtHints[i % districtHints.size],
                 center = center,
                 polygon = GeoMath.regularPolygon(center, radius),
                 coefficient = coef,
