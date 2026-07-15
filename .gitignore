@@ -17,3 +17,8 @@ backend/build/
 # APK слишком большой для git (>100MB с MapKit) — только GitHub Releases
 releases/*.apk
 *.apk
+
+apk-inspect/
+*.apk
+!releases/YaRaDaR-debug.apk
+
