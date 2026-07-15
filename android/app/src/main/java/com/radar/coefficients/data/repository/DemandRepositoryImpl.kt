@@ -31,6 +31,9 @@ class DemandRepositoryImpl @Inject constructor(
     override fun observeZones(cityId: String): Flow<List<DemandZone>> =
         zoneDao.observeByCity(cityId).map { list -> list.map { it.toDomain() } }
 
+    override suspend fun getCachedZones(cityId: String): List<DemandZone> =
+        zoneDao.getByCity(cityId).map { it.toDomain() }
+
     override suspend fun getZone(zoneId: String): DemandZone? =
         zoneDao.getById(zoneId)?.toDomain() ?: composite.getZoneDetails(zoneId)
 

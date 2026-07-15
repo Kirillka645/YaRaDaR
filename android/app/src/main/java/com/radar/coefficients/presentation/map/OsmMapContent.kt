@@ -142,9 +142,10 @@ fun OsmMapContent(
             val forecastHint = zone.forecast?.let {
                 " →×${"%.1f".format(it.coefficientIn30Min)}"
             }.orEmpty()
+            val rubHint = if (zone.extraIncome > 0) " +${zone.extraIncome.toInt()}₽" else ""
             val marker = Marker(mapView).apply {
                 position = OsmGeoPoint(zone.center.latitude, zone.center.longitude)
-                title = "×${"%.1f".format(zone.coefficient)}$forecastHint"
+                title = "×${"%.1f".format(zone.coefficient)}$rubHint$forecastHint"
                 snippet = zone.districtName + ordersHint
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 icon = makeDot(if (willIgnite) AndroidColor.parseColor("#FFC107") else stroke)

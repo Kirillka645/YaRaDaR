@@ -55,6 +55,12 @@ class SettingsDataStore @Inject constructor(
         val shiftZones = intPreferencesKey("shift_zones")
         val showForecast = booleanPreferencesKey("show_forecast")
         val highlightIgnite = booleanPreferencesKey("highlight_ignite")
+        val overlayEnabled = booleanPreferencesKey("overlay_enabled")
+        val overlayShowCoef = booleanPreferencesKey("overlay_show_coef")
+        val overlayShowRub = booleanPreferencesKey("overlay_show_rub")
+        val overlayCompact = booleanPreferencesKey("overlay_compact")
+        val overlayOpacity = intPreferencesKey("overlay_opacity")
+        val overlaySize = intPreferencesKey("overlay_size")
     }
 
     val settingsFlow: Flow<UserSettings> = context.dataStore.data.map { it.toSettings() }
@@ -100,6 +106,12 @@ class SettingsDataStore @Inject constructor(
             prefs[Keys.shiftZones] = next.shiftZonesChecked
             prefs[Keys.showForecast] = next.showForecastAndOrders
             prefs[Keys.highlightIgnite] = next.highlightPredictedIgnite
+            prefs[Keys.overlayEnabled] = next.overlayEnabled
+            prefs[Keys.overlayShowCoef] = next.overlayShowCoef
+            prefs[Keys.overlayShowRub] = next.overlayShowRub
+            prefs[Keys.overlayCompact] = next.overlayCompact
+            prefs[Keys.overlayOpacity] = next.overlayOpacityPercent
+            prefs[Keys.overlaySize] = next.overlaySize
         }
     }
 
@@ -142,7 +154,13 @@ class SettingsDataStore @Inject constructor(
             shiftStartedAtEpochMs = this[Keys.shiftStart] ?: 0L,
             shiftZonesChecked = this[Keys.shiftZones] ?: 0,
             showForecastAndOrders = this[Keys.showForecast] ?: true,
-            highlightPredictedIgnite = this[Keys.highlightIgnite] ?: true
+            highlightPredictedIgnite = this[Keys.highlightIgnite] ?: true,
+            overlayEnabled = this[Keys.overlayEnabled] ?: false,
+            overlayShowCoef = this[Keys.overlayShowCoef] ?: true,
+            overlayShowRub = this[Keys.overlayShowRub] ?: true,
+            overlayCompact = this[Keys.overlayCompact] ?: true,
+            overlayOpacityPercent = (this[Keys.overlayOpacity] ?: 88).coerceIn(30, 100),
+            overlaySize = (this[Keys.overlaySize] ?: 1).coerceIn(0, 2)
         )
     }
 }

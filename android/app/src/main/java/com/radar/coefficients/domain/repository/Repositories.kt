@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.Flow
 interface DemandRepository {
     suspend fun refreshZones(cityId: String, bounds: GeoBounds?): Result<List<DemandZone>>
     fun observeZones(cityId: String): Flow<List<DemandZone>>
+    /** Кэш Room без сети — для оверлея / офлайн. */
+    suspend fun getCachedZones(cityId: String): List<DemandZone>
     suspend fun getZone(zoneId: String): DemandZone?
     suspend fun getLastUpdatedAt(): Long?
     suspend fun getActiveProvidersStatus(): List<ProviderStatus>

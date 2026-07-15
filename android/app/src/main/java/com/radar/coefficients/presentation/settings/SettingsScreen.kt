@@ -1,5 +1,8 @@
 package com.radar.coefficients.presentation.settings
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings as AndroidSettings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -12,24 +15,35 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.radar.coefficients.data.overlay.FloatingCoefService
 import com.radar.coefficients.domain.model.AlertThresholdMode
 import com.radar.coefficients.domain.model.DisplayCurrency
 import com.radar.coefficients.domain.model.UserSettings
@@ -54,6 +68,17 @@ class SettingsViewModel @Inject constructor(
     fun update(block: (UserSettings) -> UserSettings) {
         viewModelScope.launch { settingsRepository.updateSettings(block) }
     }
+
+    fun setOverlayEnabled(enabled: Boolean, canDraw: Boolean, startService: () -> Unit, stopService: () -> Unit) {
+        viewModelScope.launch {
+            if (enabled && !canDraw) {
+                // permission will be requested by UI; don't enable yet
+                return@launch
+            }
+            settingsRepository.updateSettings { it.copy(overlayEnabled = enabled) }
+            if (enabled) startService() else stopService()
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -61,6 +86,24 @@ class SettingsViewModel @Inject constructor(
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val currency = settings.displayCurrency
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var canDrawOverlays by remember {
+        mutableStateOf(FloatingCoefService.canDrawOverlays(context))
+    }
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                canDrawOverlays = FloatingCoefService.canDrawOverlays(context)
+                // если уже включено в настройках и есть permission — поднять сервис
+                if (settings.overlayEnabled && canDrawOverlays) {
+                    FloatingCoefService.start(context)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(title = { Text("Настройки", fontWeight = FontWeight.Bold) })
@@ -261,6 +304,116 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 "Жёлтый пунктир — зоны, где кэф может вырасти",
                 style = MaterialTheme.typography.bodySmall
             )
+
+            Spacer(Modifier.height(16.dp))
+            Section("Поверх окон (оверлей)")
+            Text(
+                "Плавающий виджет поверх Яндекс Про / навигатора: кэф + прибавка ₽ в вашей точке. " +
+                    "Можно перетаскивать. Тарифы — те же, что «над машинкой».",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(Modifier.height(8.dp))
+            if (!canDrawOverlays) {
+                Text(
+                    "Нужно разрешение «Поверх других приложений».",
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Button(
+                    onClick = {
+                        val intent = Intent(
+                            AndroidSettings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.padding(vertical = 8.dp)
+                ) {
+                    Text("Выдать разрешение")
+                }
+            }
+            RowItem("Показывать оверлей") {
+                Switch(
+                    checked = settings.overlayEnabled && canDrawOverlays,
+                    onCheckedChange = { on ->
+                        if (on && !canDrawOverlays) {
+                            val intent = Intent(
+                                AndroidSettings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}")
+                            )
+                            context.startActivity(intent)
+                        } else {
+                            viewModel.setOverlayEnabled(
+                                enabled = on,
+                                canDraw = canDrawOverlays,
+                                startService = { FloatingCoefService.start(context) },
+                                stopService = { FloatingCoefService.stop(context) }
+                            )
+                        }
+                    }
+                )
+            }
+            if (settings.overlayEnabled && canDrawOverlays) {
+                RowItem("Кэф в оверлее") {
+                    Switch(
+                        checked = settings.overlayShowCoef,
+                        onCheckedChange = { v ->
+                            viewModel.update {
+                                // хотя бы одно из двух
+                                val rub = if (!v && !it.overlayShowRub) true else it.overlayShowRub
+                                it.copy(overlayShowCoef = v, overlayShowRub = rub)
+                            }
+                        }
+                    )
+                }
+                RowItem("Прибавка ₽") {
+                    Switch(
+                        checked = settings.overlayShowRub,
+                        onCheckedChange = { v ->
+                            viewModel.update {
+                                val coef = if (!v && !it.overlayShowCoef) true else it.overlayShowCoef
+                                it.copy(overlayShowRub = v, overlayShowCoef = coef)
+                            }
+                        }
+                    )
+                }
+                RowItem("Компактный (1 строка)") {
+                    Switch(
+                        checked = settings.overlayCompact,
+                        onCheckedChange = { v -> viewModel.update { it.copy(overlayCompact = v) } }
+                    )
+                }
+                Text(
+                    "Прозрачность: ${settings.overlayOpacityPercent}%",
+                    fontSize = 18.sp
+                )
+                Slider(
+                    value = settings.overlayOpacityPercent.toFloat(),
+                    onValueChange = { v ->
+                        viewModel.update { it.copy(overlayOpacityPercent = v.toInt().coerceIn(30, 100)) }
+                    },
+                    valueRange = 30f..100f,
+                    steps = 13
+                )
+                Text("Размер оверлея", fontSize = 18.sp)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0 to "Малый", 1 to "Обычный", 2 to "Крупный").forEach { (sz, label) ->
+                        FilterChip(
+                            selected = settings.overlaySize == sz,
+                            onClick = { viewModel.update { it.copy(overlaySize = sz) } },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+                Text(
+                    "Превью: Э ×1.5" + if (settings.overlayShowRub) " +180 ₽" else "",
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                TextButton(onClick = { FloatingCoefService.start(context) }) {
+                    Text("Перезапустить оверлей")
+                }
+            }
 
             Spacer(Modifier.height(16.dp))
             Section("Смена")

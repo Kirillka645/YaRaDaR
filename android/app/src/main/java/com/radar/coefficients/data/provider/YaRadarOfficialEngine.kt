@@ -74,9 +74,10 @@ object YaRadarOfficialEngine {
                 coef >= 1.1 -> DemandLevel.ELEVATED
                 else -> DemandLevel.NORMAL
             }
-            // Доп. доход: базовый × (кэф-1) × давление заказов
+            // Доп. доход: базовый × (кэф-1) × давление заказов (округление до ₽)
             val orderFactor = (0.6 + orders.demandPressure * 0.35).coerceIn(0.5, 1.6)
-            val extra = baseIncome * (coef - 1.0).coerceAtLeast(0.0) * orderFactor
+            val extra = (baseIncome * (coef - 1.0).coerceAtLeast(0.0) * orderFactor)
+                .let { kotlin.math.round(it / 5.0) * 5.0 } // шаг 5 ₽ — читаемее
 
             DemandZone(
                 id = "yrd-${city.id}-${profile.kind}-$window",
@@ -109,14 +110,17 @@ object YaRadarOfficialEngine {
 
     fun multiTariffCoefficients(baseEconomy: Double, rnd: Random = Random.Default): Map<VehicleClass, Double> {
         fun round1(v: Double) = ((v.coerceIn(1.0, 3.0)) * 10).toInt() / 10.0
+        // Стабильные сдвиги + небольшой шум: тарифы читаются по-разному, но не «прыгают»
+        fun of(delta: Double, noise: Double = 0.06) =
+            round1(baseEconomy + delta + rnd.nextDouble(-noise, noise))
         return mapOf(
             VehicleClass.ECONOMY to round1(baseEconomy),
-            VehicleClass.COMFORT to round1(baseEconomy - rnd.nextDouble(0.0, 0.3)),
-            VehicleClass.COMFORT_PLUS to round1(baseEconomy - rnd.nextDouble(0.1, 0.4)),
-            VehicleClass.BUSINESS to round1(baseEconomy - rnd.nextDouble(0.2, 0.5)),
-            VehicleClass.MINIVAN to round1(baseEconomy + rnd.nextDouble(-0.1, 0.2)),
-            VehicleClass.CHILD to round1(baseEconomy + rnd.nextDouble(-0.15, 0.25)),
-            VehicleClass.COURIER to round1(baseEconomy + rnd.nextDouble(-0.2, 0.35))
+            VehicleClass.COMFORT to of(-0.08),
+            VehicleClass.COMFORT_PLUS to of(-0.12),
+            VehicleClass.BUSINESS to of(-0.18, 0.05),
+            VehicleClass.MINIVAN to of(-0.04),
+            VehicleClass.CHILD to of(+0.05),
+            VehicleClass.COURIER to of(+0.12, 0.1)
         )
     }
 

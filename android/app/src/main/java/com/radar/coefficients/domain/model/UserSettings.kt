@@ -43,7 +43,20 @@ data class UserSettings(
     /** Показывать прогноз кэфа и заказы по району */
     val showForecastAndOrders: Boolean = true,
     /** Подсвечивать зоны, где кэф «загорится» */
-    val highlightPredictedIgnite: Boolean = true
+    val highlightPredictedIgnite: Boolean = true,
+    // ——— Плавающий оверлей поверх окон ———
+    /** Показывать кэф + ₽ поверх других приложений (нужно разрешение «поверх окон»). */
+    val overlayEnabled: Boolean = false,
+    /** Показывать коэффициент в оверлее */
+    val overlayShowCoef: Boolean = true,
+    /** Показывать прибавку ₽ в оверлее */
+    val overlayShowRub: Boolean = true,
+    /** Компактный вид (1 строка) или развёрнутый */
+    val overlayCompact: Boolean = true,
+    /** Прозрачность фона 30…100 % */
+    val overlayOpacityPercent: Int = 88,
+    /** Размер: 0=маленький, 1=обычный, 2=крупный */
+    val overlaySize: Int = 1
 ) {
     companion object {
         val DEFAULT_MAP_TARIFFS: Set<VehicleClass> = setOf(

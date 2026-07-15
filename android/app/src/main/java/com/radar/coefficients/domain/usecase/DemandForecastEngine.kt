@@ -100,11 +100,17 @@ object DemandForecastEngine {
         orders: DistrictOrderStats,
         rnd: Random
     ): Double {
+        // Более заметный разброс: «тихие» ~1.0–1.2, пики ~1.6–2.6
+        val pressure = (orders.demandPressure - 0.55).coerceAtLeast(0.0)
         val base = 1.0 +
-            (orders.demandPressure - 0.8) * 0.55 * profile.surgeSensitivity +
-            hourFactor(hour, profile, weekend) * 0.25 * profile.surgeSensitivity
-        val noise = rnd.nextDouble(-0.12, 0.18)
-        return round1((base + noise).coerceIn(1.0, 2.9))
+            pressure * 0.72 * profile.surgeSensitivity +
+            hourFactor(hour, profile, weekend) * 0.32 * profile.surgeSensitivity
+        val noise = rnd.nextDouble(-0.08, 0.16)
+        // лёгкий «пол» в пик — не все зоны 1.0
+        val floor = if (hour in profile.peakHours || profile.eveningPeak?.let { hour in it } == true) {
+            1.1
+        } else 1.0
+        return round1((base + noise).coerceIn(floor, 2.9))
     }
 
     fun forecast(

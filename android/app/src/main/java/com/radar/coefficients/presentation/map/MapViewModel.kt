@@ -20,12 +20,12 @@ import com.radar.coefficients.domain.model.TariffCoefLabel
 import com.radar.coefficients.domain.model.UserSettings
 import com.radar.coefficients.domain.model.VehicleClass
 import com.radar.coefficients.domain.model.ZoneBenefitScore
-import com.radar.coefficients.data.provider.YaRadarOfficialEngine
 import com.radar.coefficients.domain.repository.CityRepository
 import com.radar.coefficients.domain.repository.DemandRepository
 import com.radar.coefficients.domain.repository.RouteRepository
 import com.radar.coefficients.domain.repository.SettingsRepository
 import com.radar.coefficients.domain.usecase.BenefitCalculator
+import com.radar.coefficients.domain.usecase.LocalCoefResolver
 import com.radar.coefficients.domain.util.GeoMath
 import com.radar.coefficients.presentation.common.UiMessage
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -357,45 +357,15 @@ class MapViewModel @Inject constructor(
     }
 
     /**
-     * Ближайшая зона + кэфы/прибавка ₽ для тарифов над машинкой.
-     * Всегда отдаёт хотя бы дефолтные подписи, если зона есть.
+     * Кэфы/прибавка ₽ в точке водителя (смешивание ближайших зон).
      */
     private fun buildDriverLabels(
         location: GeoPoint?,
         zones: List<DemandZone>,
         visible: Set<VehicleClass>
     ): Pair<List<TariffCoefLabel>, DemandZone?> {
-        val show = visible.ifEmpty { setOf(VehicleClass.ECONOMY) }
-        if (zones.isEmpty()) {
-            // fallback: хотя бы «Э ×1.0 +0 ₽», чтобы пузырь над машиной был
-            val labels = VehicleClass.configurable
-                .filter { it in show }
-                .map { TariffCoefLabel(it, 1.0, 0.0) }
-            return labels to null
-        }
-        val anchor = location ?: zones.first().center
-        val nearest = zones.minByOrNull { GeoMath.distanceKm(anchor, it.center) }
-            ?: return emptyList<TariffCoefLabel>() to null
-        val multi = if (nearest.coefficientsByClass.isEmpty()) {
-            YaRadarOfficialEngine.multiTariffCoefficients(nearest.coefficient)
-        } else nearest.coefficientsByClass
-        val labels = VehicleClass.configurable
-            .filter { it in show }
-            .map { cls ->
-                val resolved = multi[cls]
-                    ?: nearest.coefficientFor(cls).takeIf { it > 0 }
-                    ?: nearest.coefficient
-                // прибавка по тарифу: base × (кэф−1), пропорционально зоне
-                val extraRub = if (nearest.baseIncome > 0) {
-                    nearest.baseIncome * (resolved - 1.0).coerceAtLeast(0.0)
-                } else {
-                    // если base нет — масштабируем extraIncome зоны
-                    val baseCoef = nearest.coefficient.coerceAtLeast(1.01)
-                    nearest.extraIncome * ((resolved - 1.0) / (baseCoef - 1.0)).coerceAtLeast(0.0)
-                }
-                TariffCoefLabel(cls, resolved, extraRub = extraRub.coerceAtLeast(0.0))
-            }
-        return labels to nearest
+        val snap = LocalCoefResolver.resolveAt(location, zones, visible)
+        return snap.labels to snap.nearestZone
     }
 
     @SuppressLint("MissingPermission")
