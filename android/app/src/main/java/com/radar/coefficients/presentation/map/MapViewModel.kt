@@ -51,6 +51,12 @@ data class MapUiState(
     /** Кэфы выбранных тарифов в текущей точке (над машинкой) */
     val driverTariffLabels: List<TariffCoefLabel> = emptyList(),
     val localZone: DemandZone? = null,
+    /** Произвольная метка на карте (долгое нажатие) */
+    val pinLocation: GeoPoint? = null,
+    val pinTariffLabels: List<TariffCoefLabel> = emptyList(),
+    val pinDistrictName: String? = null,
+    val pinEconomyCoef: Double = 1.0,
+    val pinExtraRub: Double = 0.0,
     val city: City? = null,
     val settings: UserSettings = UserSettings(),
     val lastUpdatedAt: Long? = null,
@@ -84,11 +90,13 @@ class MapViewModel @Inject constructor(
                     _state.update {
                         val radius = MapRadiusFilter.fromKm(settings.mapRadiusKm)
                         val filtered = filterZones(it.zones, it.driverLocation, radius, settings)
+                        val zonesForLabels = it.zones.ifEmpty { filtered }
                         val labels = buildDriverLabels(
                             location = it.driverLocation ?: city?.center,
-                            zones = it.zones.ifEmpty { filtered },
+                            zones = zonesForLabels,
                             visible = settings.mapVisibleTariffs
                         )
+                        val pin = recomputePin(it.pinLocation, zonesForLabels, settings.mapVisibleTariffs)
                         it.copy(
                             settings = settings,
                             city = city,
@@ -96,6 +104,10 @@ class MapViewModel @Inject constructor(
                             filteredZones = if (it.zones.isNotEmpty()) filtered else it.filteredZones,
                             driverTariffLabels = labels.first,
                             localZone = labels.second,
+                            pinTariffLabels = pin.labels,
+                            pinDistrictName = pin.district,
+                            pinEconomyCoef = pin.coef,
+                            pinExtraRub = pin.extra,
                             showTraffic = settings.showTraffic
                         )
                     }
@@ -208,12 +220,17 @@ class MapViewModel @Inject constructor(
                             zones, // все зоны — чтобы над машиной всегда были кэфы/₽
                             it.settings.mapVisibleTariffs
                         )
+                        val pin = recomputePin(it.pinLocation, zones, it.settings.mapVisibleTariffs)
                         it.copy(
                             isLoading = false,
                             zones = zones,
                             filteredZones = filtered,
                             driverTariffLabels = labels.first,
                             localZone = labels.second,
+                            pinTariffLabels = pin.labels,
+                            pinDistrictName = pin.district,
+                            pinEconomyCoef = pin.coef,
+                            pinExtraRub = pin.extra,
                             lastUpdatedAt = demandRepository.getLastUpdatedAt(),
                             realDataAvailable = real,
                             message = when {
@@ -327,6 +344,60 @@ class MapViewModel @Inject constructor(
 
     fun centerOnDriver() {
         bootstrapLocation()
+    }
+
+    /** Долгое нажатие / тап «поставить метку» — кэф + ₽ в этой точке. */
+    fun placePin(point: GeoPoint) {
+        val s = _state.value
+        val zones = s.zones.ifEmpty { s.filteredZones }
+        val pin = recomputePin(point, zones, s.settings.mapVisibleTariffs)
+        _state.update {
+            it.copy(
+                pinLocation = point,
+                pinTariffLabels = pin.labels,
+                pinDistrictName = pin.district,
+                pinEconomyCoef = pin.coef,
+                pinExtraRub = pin.extra,
+                selectedZone = null,
+                selectedScore = null,
+                selectedFare = null,
+                selectedFareBase = null
+            )
+        }
+    }
+
+    fun clearPin() {
+        _state.update {
+            it.copy(
+                pinLocation = null,
+                pinTariffLabels = emptyList(),
+                pinDistrictName = null,
+                pinEconomyCoef = 1.0,
+                pinExtraRub = 0.0
+            )
+        }
+    }
+
+    private data class PinSnap(
+        val labels: List<TariffCoefLabel>,
+        val district: String?,
+        val coef: Double,
+        val extra: Double
+    )
+
+    private fun recomputePin(
+        pin: GeoPoint?,
+        zones: List<DemandZone>,
+        visible: Set<VehicleClass>
+    ): PinSnap {
+        if (pin == null) return PinSnap(emptyList(), null, 1.0, 0.0)
+        val snap = LocalCoefResolver.resolveAt(pin, zones, visible)
+        return PinSnap(
+            labels = snap.labels,
+            district = snap.districtName,
+            coef = snap.blendedEconomyCoef,
+            extra = snap.blendedExtraRub
+        )
     }
 
     private fun filterZones(

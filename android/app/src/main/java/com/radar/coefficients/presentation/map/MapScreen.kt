@@ -22,7 +22,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -42,6 +44,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -139,6 +142,7 @@ fun MapScreen(
         AlertThresholdMode.RUBLES -> true
         AlertThresholdMode.BOTH -> true
     }
+    var pinPlacementMode by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         // OpenStreetMap — без API-ключа, карты видны сразу
@@ -149,12 +153,19 @@ fun MapScreen(
             cameraEpoch = cameraEpoch,
             driverLocation = state.driverLocation ?: state.city?.center ?: mapCenter,
             driverTariffLabels = state.driverTariffLabels,
+            pinLocation = state.pinLocation,
+            pinTariffLabels = state.pinTariffLabels,
             highlightPredictedIgnite = state.settings.highlightPredictedIgnite,
             minCoefForHot = state.settings.minCoefficientAlert,
             showCoefOnCar = showCoefOnCar,
             showRubOnCar = showRubOnCar,
+            pinPlacementMode = pinPlacementMode,
             onZoneClick = { viewModel.selectZone(it) },
             onMapClick = { viewModel.selectZone(null) },
+            onPlacePin = { point ->
+                viewModel.placePin(point)
+                pinPlacementMode = false
+            },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -267,11 +278,93 @@ fun MapScreen(
                             enabled = false
                         )
                     }
+                    Text(
+                        if (pinPlacementMode) "Режим метки: тапните на карту"
+                        else "Долгое нажатие / 📍 — метка с кэфом + ₽",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (pinPlacementMode) MaterialTheme.colorScheme.tertiary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            if (pinPlacementMode) {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    tonalElevation = 4.dp,
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "Тапните в любое место на карте — поставим метку с кэфом и прибавкой ₽",
+                        modifier = Modifier.padding(12.dp),
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
             if (state.message != null && state.message != UiMessage.Loading && state.filteredZones.isEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 StatePanel(message = state.message!!, onRetry = viewModel::refresh)
+            }
+        }
+
+        // Карточка метки
+        if (state.pinLocation != null) {
+            Surface(
+                tonalElevation = 8.dp,
+                shape = MaterialTheme.shapes.large,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 16.dp, end = 88.dp, bottom = 16.dp)
+                    .fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Метка",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = viewModel::clearPin) {
+                            Text("Убрать")
+                        }
+                    }
+                    state.pinDistrictName?.let {
+                        Text(it, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Text(
+                        "×${"%.1f".format(state.pinEconomyCoef)} · +" +
+                            "${state.pinExtraRub.toInt()} ₽ (ориент.)",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (state.pinTariffLabels.isNotEmpty()) {
+                        Text(
+                            state.pinTariffLabels.joinToString(" · ") {
+                                it.mapText(showCoefOnCar, showRubOnCar)
+                            },
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Text(
+                        "Модель YaRaDaR · не Яндекс Про",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    val pin = state.pinLocation!!
+                    Button(
+                        onClick = {
+                            openYandexRoute(context, pin.latitude, pin.longitude)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                    ) {
+                        Text("Маршрут к метке (Яндекс)")
+                    }
+                }
             }
         }
 
@@ -281,6 +374,31 @@ fun MapScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            if (state.pinLocation != null) {
+                FloatingActionButton(
+                    onClick = viewModel::clearPin,
+                    modifier = Modifier.size(TouchTargetMin),
+                    shape = CircleShape,
+                    containerColor = MaterialTheme.colorScheme.errorContainer
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = "Убрать метку")
+                }
+            }
+            FloatingActionButton(
+                onClick = { pinPlacementMode = !pinPlacementMode },
+                modifier = Modifier.size(TouchTargetMin),
+                shape = CircleShape,
+                containerColor = if (pinPlacementMode) {
+                    MaterialTheme.colorScheme.tertiary
+                } else {
+                    MaterialTheme.colorScheme.secondaryContainer
+                }
+            ) {
+                Icon(
+                    Icons.Default.Place,
+                    contentDescription = "Поставить метку"
+                )
+            }
             FloatingActionButton(
                 onClick = viewModel::refresh,
                 modifier = Modifier.size(TouchTargetMin),

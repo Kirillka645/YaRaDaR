@@ -38,12 +38,16 @@ fun OsmMapContent(
     cameraEpoch: Int,
     driverLocation: GeoPoint?,
     driverTariffLabels: List<TariffCoefLabel>,
+    pinLocation: GeoPoint? = null,
+    pinTariffLabels: List<TariffCoefLabel> = emptyList(),
     highlightPredictedIgnite: Boolean = true,
     minCoefForHot: Double = 1.5,
     showCoefOnCar: Boolean = true,
     showRubOnCar: Boolean = true,
+    pinPlacementMode: Boolean = false,
     onZoneClick: (DemandZone) -> Unit,
     onMapClick: () -> Unit,
+    onPlacePin: (GeoPoint) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -82,16 +86,28 @@ fun OsmMapContent(
 
     LaunchedEffect(
         zones, driverLocation, driverTariffLabels,
-        highlightPredictedIgnite, showCoefOnCar, showRubOnCar, onZoneClick
+        pinLocation, pinTariffLabels,
+        highlightPredictedIgnite, showCoefOnCar, showRubOnCar,
+        pinPlacementMode, onZoneClick, onPlacePin
     ) {
         mapView.overlays.clear()
         mapView.overlays.add(
             MapEventsOverlay(object : MapEventsReceiver {
                 override fun singleTapConfirmedHelper(p: OsmGeoPoint?): Boolean {
+                    if (p == null) return false
+                    if (pinPlacementMode) {
+                        onPlacePin(GeoPoint(p.latitude, p.longitude))
+                        return true
+                    }
                     onMapClick()
-                    return false // не блокируем маркеры
+                    return false
                 }
-                override fun longPressHelper(p: OsmGeoPoint?): Boolean = false
+                override fun longPressHelper(p: OsmGeoPoint?): Boolean {
+                    if (p == null) return false
+                    // Долгое нажатие — поставить метку с кэфом + ₽
+                    onPlacePin(GeoPoint(p.latitude, p.longitude))
+                    return true
+                }
             })
         )
 
@@ -132,7 +148,11 @@ fun OsmMapContent(
                     outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(18f, 12f), 0f)
                 }
                 setOnClickListener { _, _, _ ->
-                    onZoneClick(zone)
+                    if (pinPlacementMode) {
+                        onPlacePin(zone.center)
+                    } else {
+                        onZoneClick(zone)
+                    }
                     true
                 }
             }
@@ -150,14 +170,36 @@ fun OsmMapContent(
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 icon = makeDot(if (willIgnite) AndroidColor.parseColor("#FFC107") else stroke)
                 setOnMarkerClickListener { _, _ ->
-                    onZoneClick(zone)
+                    if (pinPlacementMode) onPlacePin(zone.center) else onZoneClick(zone)
                     true
                 }
             }
             mapView.overlays.add(marker)
         }
 
-        // Машинка ВСЕГДА поверх зон: позиция водителя или центр карты
+        // Метка «сюда» (фиолетовая) — поверх зон
+        pinLocation?.let { pin ->
+            val pinIcon = DriverMarkerFactory.createPin(
+                context = context,
+                labels = pinTariffLabels,
+                showCoef = showCoefOnCar,
+                showRub = showRubOnCar
+            )
+            val pinMarker = Marker(mapView).apply {
+                position = OsmGeoPoint(pin.latitude, pin.longitude)
+                title = "Метка"
+                snippet = pinTariffLabels.joinToString(" · ") {
+                    it.mapText(showCoefOnCar, showRubOnCar)
+                }
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                icon = pinIcon
+                setInfoWindow(null)
+                setOnMarkerClickListener { _, _ -> true }
+            }
+            mapView.overlays.add(pinMarker)
+        }
+
+        // Машинка ВСЕГДА: позиция водителя или центр карты
         val carPos = driverLocation ?: center
         val carIcon = DriverMarkerFactory.create(
             context = context,
@@ -171,7 +213,6 @@ fun OsmMapContent(
             snippet = driverTariffLabels.joinToString(" · ") {
                 it.mapText(showCoefOnCar, showRubOnCar)
             }
-            // якорь: низ иконки = точка на карте, пузырь сверху
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             icon = carIcon
             setInfoWindow(null)
@@ -179,19 +220,13 @@ fun OsmMapContent(
             setOnMarkerClickListener { _, _ -> true }
         }
         mapView.overlays.add(driverMarker)
-        // osmdroid: последний overlay = сверху; дублируем bring-to-front
-        mapView.overlays.remove(driverMarker)
-        mapView.overlays.add(driverMarker)
         mapView.invalidate()
     }
 
     AndroidView(
         factory = { mapView },
         modifier = modifier.fillMaxSize(),
-        update = { mv ->
-            // держим машинку поверх при любом update
-            mv.invalidate()
-        }
+        update = { mv -> mv.invalidate() }
     )
 }
 

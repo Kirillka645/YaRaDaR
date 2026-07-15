@@ -14,7 +14,7 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * Крупная машинка + пузырь сверху: Э ×1.5 +180 ₽
+ * Маркеры на карте: машинка «вы здесь» и фиолетовая метка «сюда».
  */
 object DriverMarkerFactory {
 
@@ -23,6 +23,42 @@ object DriverMarkerFactory {
         labels: List<TariffCoefLabel>,
         showCoef: Boolean = true,
         showRub: Boolean = true
+    ): BitmapDrawable = createMarker(
+        context = context,
+        labels = labels,
+        showCoef = showCoef,
+        showRub = showRub,
+        emptyTitle = "Вы здесь",
+        bubbleColor = Color.parseColor("#0D47A1"),
+        markerKind = MarkerKind.CAR
+    )
+
+    /** Метка в произвольной точке: кэф + ₽ */
+    fun createPin(
+        context: Context,
+        labels: List<TariffCoefLabel>,
+        showCoef: Boolean = true,
+        showRub: Boolean = true
+    ): BitmapDrawable = createMarker(
+        context = context,
+        labels = labels,
+        showCoef = showCoef,
+        showRub = showRub,
+        emptyTitle = "Метка",
+        bubbleColor = Color.parseColor("#6A1B9A"),
+        markerKind = MarkerKind.PIN
+    )
+
+    private enum class MarkerKind { CAR, PIN }
+
+    private fun createMarker(
+        context: Context,
+        labels: List<TariffCoefLabel>,
+        showCoef: Boolean,
+        showRub: Boolean,
+        emptyTitle: String,
+        bubbleColor: Int,
+        markerKind: MarkerKind
     ): BitmapDrawable {
         val density = context.resources.displayMetrics.density
         fun dp(v: Float): Float = v * density
@@ -40,9 +76,8 @@ object DriverMarkerFactory {
             typeface = Typeface.DEFAULT_BOLD
             textAlign = Paint.Align.CENTER
         }
-        // без setShadowLayer — на части устройств тень ломает bitmap/hardware layer
         val bubblePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#0D47A1")
+            color = bubbleColor
             style = Paint.Style.FILL
         }
         val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -52,9 +87,8 @@ object DriverMarkerFactory {
         }
 
         val lines = if (labels.isEmpty()) {
-            listOf("Вы здесь", if (showRub && !showCoef) "+0 ₽" else "Э ×1.0")
+            listOf(emptyTitle, if (showRub && !showCoef) "+0 ₽" else "Э ×1.0")
         } else {
-            // по 1–2 тарифа в строке
             labels.chunked(2).map { chunk ->
                 chunk.joinToString("   ") { it.mapText(showCoef, showRub) }
             }
@@ -63,16 +97,16 @@ object DriverMarkerFactory {
         val padH = dp(16f)
         val padV = dp(12f)
         val lineH = dp(22f)
-        val carH = dp(58f)
-        val carW = dp(80f)
+        val footH = if (markerKind == MarkerKind.CAR) dp(58f) else dp(42f)
+        val footW = if (markerKind == MarkerKind.CAR) dp(80f) else dp(36f)
         val gap = dp(10f)
 
         var maxTextW = 0f
         lines.forEach { maxTextW = max(maxTextW, titlePaint.measureText(it)) }
-        val bubbleW = max(maxTextW + padH * 2, carW + dp(28f))
+        val bubbleW = max(maxTextW + padH * 2, footW + dp(28f))
         val bubbleH = padV * 2 + lineH * lines.size
-        val totalW = (max(bubbleW, carW) + dp(16f)).roundToInt().coerceAtLeast(1)
-        val totalH = (bubbleH + gap + carH + dp(8f)).roundToInt().coerceAtLeast(1)
+        val totalW = (max(bubbleW, footW) + dp(16f)).roundToInt().coerceAtLeast(1)
+        val totalH = (bubbleH + gap + footH + dp(8f)).roundToInt().coerceAtLeast(1)
 
         val bmp = Bitmap.createBitmap(totalW, totalH, Bitmap.Config.ARGB_8888)
         bmp.density = context.resources.displayMetrics.densityDpi
@@ -102,7 +136,28 @@ object DriverMarkerFactory {
             ty += lineH
         }
 
-        val carTop = bubbleH + gap
+        val footTop = bubbleH + gap
+        if (markerKind == MarkerKind.CAR) {
+            drawCar(canvas, cx, footTop, footW, footH, ::dp, borderPaint)
+        } else {
+            drawPinFoot(canvas, cx, footTop, footH, ::dp, borderPaint)
+        }
+
+        return BitmapDrawable(context.resources, bmp).apply {
+            setTargetDensity(context.resources.displayMetrics)
+            setBounds(0, 0, totalW, totalH)
+        }
+    }
+
+    private fun drawCar(
+        canvas: Canvas,
+        cx: Float,
+        carTop: Float,
+        carW: Float,
+        carH: Float,
+        dp: (Float) -> Float,
+        borderPaint: Paint
+    ) {
         val carLeft = cx - carW / 2f
         val body = RectF(carLeft, carTop + dp(12f), carLeft + carW, carTop + carH - dp(6f))
         val cabin = RectF(
@@ -144,14 +199,38 @@ object DriverMarkerFactory {
         val wheelR = dp(7f)
         canvas.drawCircle(carLeft + dp(16f), carTop + carH - dp(8f), wheelR, wheelPaint)
         canvas.drawCircle(carLeft + carW - dp(16f), carTop + carH - dp(8f), wheelR, wheelPaint)
-        // оранжевая точка «вы здесь»
         val pinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#D50000") }
         canvas.drawCircle(cx, carTop + carH / 2f + dp(4f), dp(5f), pinPaint)
         canvas.drawCircle(cx, carTop + carH / 2f + dp(4f), dp(5f), borderPaint)
+    }
 
-        return BitmapDrawable(context.resources, bmp).apply {
-            setTargetDensity(context.resources.displayMetrics)
-            setBounds(0, 0, totalW, totalH)
+    private fun drawPinFoot(
+        canvas: Canvas,
+        cx: Float,
+        top: Float,
+        height: Float,
+        dp: (Float) -> Float,
+        borderPaint: Paint
+    ) {
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#AB47BC")
+            style = Paint.Style.FILL
         }
+        val r = dp(14f)
+        val cy = top + r
+        canvas.drawCircle(cx, cy, r, fill)
+        canvas.drawCircle(cx, cy, r, borderPaint)
+        val tip = Path().apply {
+            moveTo(cx - dp(10f), cy + dp(6f))
+            lineTo(cx, top + height - dp(2f))
+            lineTo(cx + dp(10f), cy + dp(6f))
+            close()
+        }
+        canvas.drawPath(tip, fill)
+        val inner = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+        }
+        canvas.drawCircle(cx, cy, dp(5f), inner)
     }
 }
