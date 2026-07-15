@@ -15,8 +15,21 @@ data class UserSettings(
     val lastKnownLatitude: Double? = null,
     val lastKnownLongitude: Double? = null,
     val favoriteCityIds: Set<String> = emptySet(),
-    val recentCityIds: List<String> = emptyList()
-)
+    val recentCityIds: List<String> = emptyList(),
+    /**
+     * Какие тарифы показывать над машинкой на карте.
+     * По умолчанию: Эконом, Комфорт, Детский.
+     */
+    val mapVisibleTariffs: Set<VehicleClass> = DEFAULT_MAP_TARIFFS
+) {
+    companion object {
+        val DEFAULT_MAP_TARIFFS: Set<VehicleClass> = setOf(
+            VehicleClass.ECONOMY,
+            VehicleClass.COMFORT,
+            VehicleClass.CHILD
+        )
+    }
+}
 
 enum class RadarSortMode {
     MAX_BENEFIT,

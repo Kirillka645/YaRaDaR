@@ -148,14 +148,13 @@ class DemoDemandCoefficientProvider @Inject constructor() : DemandCoefficientPro
                 isDemo = true,
                 confidence = 0.35,
                 demandLevel = level,
-                availableVehicleClasses = city.availableVehicleClasses.ifEmpty {
-                    listOf(VehicleClass.ECONOMY, VehicleClass.COMFORT)
-                },
+                availableVehicleClasses = VehicleClass.configurable,
                 survivalProbability = when {
                     coef >= 2.0 -> 0.5
                     coef >= 1.5 -> 0.65
                     else -> 0.8
-                }
+                },
+                coefficientsByClass = YaRadarOfficialEngine.multiTariffCoefficients(coef)
             )
         }
     }

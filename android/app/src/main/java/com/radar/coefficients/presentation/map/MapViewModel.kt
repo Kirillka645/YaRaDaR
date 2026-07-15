@@ -15,8 +15,11 @@ import com.radar.coefficients.domain.model.FareEstimate
 import com.radar.coefficients.domain.model.FareEstimateRequest
 import com.radar.coefficients.domain.model.GeoPoint
 import com.radar.coefficients.domain.model.MapRadiusFilter
+import com.radar.coefficients.domain.model.TariffCoefLabel
 import com.radar.coefficients.domain.model.UserSettings
+import com.radar.coefficients.domain.model.VehicleClass
 import com.radar.coefficients.domain.model.ZoneBenefitScore
+import com.radar.coefficients.data.provider.YaRadarOfficialEngine
 import com.radar.coefficients.domain.repository.CityRepository
 import com.radar.coefficients.domain.repository.DemandRepository
 import com.radar.coefficients.domain.repository.RouteRepository
@@ -44,6 +47,9 @@ data class MapUiState(
     val selectedFare: FareEstimate? = null,
     val selectedFareBase: FareEstimate? = null,
     val driverLocation: GeoPoint? = null,
+    /** Кэфы выбранных тарифов в текущей точке (над машинкой) */
+    val driverTariffLabels: List<TariffCoefLabel> = emptyList(),
+    val localZone: DemandZone? = null,
     val city: City? = null,
     val settings: UserSettings = UserSettings(),
     val lastUpdatedAt: Long? = null,
@@ -75,9 +81,16 @@ class MapViewModel @Inject constructor(
             ) { settings, city -> settings to city }
                 .collect { (settings, city) ->
                     _state.update {
+                        val labels = buildDriverLabels(
+                            location = it.driverLocation,
+                            zones = it.filteredZones.ifEmpty { it.zones },
+                            visible = settings.mapVisibleTariffs
+                        )
                         it.copy(
                             settings = settings,
                             city = city,
+                            driverTariffLabels = labels.first,
+                            localZone = labels.second,
                             showTraffic = settings.showTraffic,
                             radius = MapRadiusFilter.fromKm(settings.mapRadiusKm)
                         )
@@ -121,7 +134,18 @@ class MapViewModel @Inject constructor(
                 return@launch
             }
             val point = GeoPoint(loc.latitude, loc.longitude)
-            _state.update { it.copy(driverLocation = point) }
+            _state.update {
+                val labels = buildDriverLabels(
+                    point,
+                    it.filteredZones.ifEmpty { it.zones },
+                    it.settings.mapVisibleTariffs
+                )
+                it.copy(
+                    driverLocation = point,
+                    driverTariffLabels = labels.first,
+                    localZone = labels.second
+                )
+            }
             settingsRepository.updateSettings {
                 it.copy(lastKnownLatitude = point.latitude, lastKnownLongitude = point.longitude)
             }
@@ -169,10 +193,17 @@ class MapViewModel @Inject constructor(
                     val filtered = filterZones(zones, _state.value.driverLocation, _state.value.radius)
                     val allStale = zones.isNotEmpty() && zones.all { it.isStale() }
                     _state.update {
+                        val labels = buildDriverLabels(
+                            it.driverLocation,
+                            filtered,
+                            it.settings.mapVisibleTariffs
+                        )
                         it.copy(
                             isLoading = false,
                             zones = zones,
                             filteredZones = filtered,
+                            driverTariffLabels = labels.first,
+                            localZone = labels.second,
                             lastUpdatedAt = demandRepository.getLastUpdatedAt(),
                             realDataAvailable = real,
                             message = when {
@@ -203,7 +234,17 @@ class MapViewModel @Inject constructor(
             settingsRepository.updateSettings { it.copy(mapRadiusKm = filter.km) }
             _state.update {
                 val filtered = filterZones(it.zones, it.driverLocation, filter)
-                it.copy(radius = filter, filteredZones = filtered)
+                val labels = buildDriverLabels(
+                    it.driverLocation,
+                    filtered,
+                    it.settings.mapVisibleTariffs
+                )
+                it.copy(
+                    radius = filter,
+                    filteredZones = filtered,
+                    driverTariffLabels = labels.first,
+                    localZone = labels.second
+                )
             }
         }
     }
@@ -279,6 +320,37 @@ class MapViewModel @Inject constructor(
     ): List<DemandZone> {
         if (driver == null) return zones
         return zones.filter { GeoMath.distanceKm(driver, it.center) <= radius.km }
+    }
+
+    /**
+     * Берёт ближайшую зону (или зону, в центре которой вы стоите) и
+     * собирает кэфы для включённых в настройках тарифов.
+     */
+    private fun buildDriverLabels(
+        location: GeoPoint?,
+        zones: List<DemandZone>,
+        visible: Set<VehicleClass>
+    ): Pair<List<TariffCoefLabel>, DemandZone?> {
+        if (location == null || zones.isEmpty() || visible.isEmpty()) {
+            return emptyList<TariffCoefLabel>() to null
+        }
+        val nearest = zones.minByOrNull { GeoMath.distanceKm(location, it.center) }
+            ?: return emptyList<TariffCoefLabel>() to null
+        val order = VehicleClass.configurable
+        val labels = order
+            .filter { it in visible }
+            .map { cls ->
+                val coef = nearest.coefficientFor(cls).let { c ->
+                    if (c <= 0) nearest.coefficient else c
+                }
+                // если в зоне нет карты тарифов — достраиваем
+                val resolved = if (nearest.coefficientsByClass.isEmpty()) {
+                    YaRadarOfficialEngine.multiTariffCoefficients(nearest.coefficient)[cls]
+                        ?: nearest.coefficient
+                } else coef
+                TariffCoefLabel(cls, resolved)
+            }
+        return labels to nearest
     }
 
     @SuppressLint("MissingPermission")

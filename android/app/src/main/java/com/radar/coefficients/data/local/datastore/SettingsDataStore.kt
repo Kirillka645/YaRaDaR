@@ -39,6 +39,7 @@ class SettingsDataStore @Inject constructor(
         val lastLon = doublePreferencesKey("last_lon")
         val favorites = stringSetPreferencesKey("favorites")
         val recents = stringPreferencesKey("recents")
+        val mapTariffs = stringSetPreferencesKey("map_visible_tariffs")
     }
 
     val settingsFlow: Flow<UserSettings> = context.dataStore.data.map { it.toSettings() }
@@ -71,11 +72,17 @@ class SettingsDataStore @Inject constructor(
             next.lastKnownLongitude?.let { prefs[Keys.lastLon] = it }
             prefs[Keys.favorites] = next.favoriteCityIds
             prefs[Keys.recents] = next.recentCityIds.joinToString(",")
+            prefs[Keys.mapTariffs] = next.mapVisibleTariffs.map { it.name }.toSet()
         }
     }
 
     private fun Preferences.toSettings(): UserSettings {
         val recents = this[Keys.recents]?.split(",")?.filter { it.isNotBlank() }.orEmpty()
+        val mapTariffs = this[Keys.mapTariffs]
+            ?.mapNotNull { runCatching { VehicleClass.valueOf(it) }.getOrNull() }
+            ?.toSet()
+            ?.ifEmpty { null }
+            ?: UserSettings.DEFAULT_MAP_TARIFFS
         return UserSettings(
             minCoefficientAlert = this[Keys.minCoef] ?: 1.5,
             notificationRadiusKm = this[Keys.notifRadius] ?: 5,
@@ -93,7 +100,8 @@ class SettingsDataStore @Inject constructor(
             lastKnownLatitude = this[Keys.lastLat],
             lastKnownLongitude = this[Keys.lastLon],
             favoriteCityIds = this[Keys.favorites] ?: emptySet(),
-            recentCityIds = recents
+            recentCityIds = recents,
+            mapVisibleTariffs = mapTariffs
         )
     }
 }

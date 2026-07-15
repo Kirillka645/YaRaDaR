@@ -12,6 +12,7 @@ import com.radar.coefficients.domain.model.GeoPoint
 import com.radar.coefficients.domain.model.SourceType
 import com.radar.coefficients.domain.model.VehicleClass
 import org.json.JSONArray
+import org.json.JSONObject
 
 fun DemandZone.toEntity(): DemandZoneEntity = DemandZoneEntity(
     id = id,
@@ -33,35 +34,58 @@ fun DemandZone.toEntity(): DemandZoneEntity = DemandZoneEntity(
     confidence = confidence,
     demandLevel = demandLevel.name,
     vehicleClassesCsv = availableVehicleClasses.joinToString(",") { it.name },
-    survivalProbability = survivalProbability
+    survivalProbability = survivalProbability,
+    coefficientsByClassJson = coefficientsToJson(coefficientsByClass)
 )
 
-fun DemandZoneEntity.toDomain(): DemandZone = DemandZone(
-    id = id,
-    cityId = cityId,
-    districtName = districtName,
-    center = GeoPoint(latitude, longitude),
-    polygon = polygonFromJson(polygonJson),
-    coefficient = coefficient,
-    coefficientType = runCatching { CoefficientType.valueOf(coefficientType) }
-        .getOrDefault(CoefficientType.UNKNOWN),
-    baseIncome = baseIncome,
-    extraIncome = extraIncome,
-    fetchedAtEpochMs = fetchedAtEpochMs,
-    validUntilEpochMs = validUntilEpochMs,
-    sourceName = sourceName,
-    sourceType = runCatching { SourceType.valueOf(sourceType) }
-        .getOrDefault(SourceType.DEMO_PROVIDER),
-    isRealData = isRealData,
-    isDemo = isDemo,
-    confidence = confidence,
-    demandLevel = runCatching { DemandLevel.valueOf(demandLevel) }
-        .getOrDefault(DemandLevel.ELEVATED),
-    availableVehicleClasses = vehicleClassesCsv.split(",")
-        .filter { it.isNotBlank() }
-        .mapNotNull { runCatching { VehicleClass.valueOf(it) }.getOrNull() },
-    survivalProbability = survivalProbability
-)
+fun DemandZoneEntity.toDomain(): DemandZone {
+    val byClass = coefficientsFromJson(coefficientsByClassJson)
+    return DemandZone(
+        id = id,
+        cityId = cityId,
+        districtName = districtName,
+        center = GeoPoint(latitude, longitude),
+        polygon = polygonFromJson(polygonJson),
+        coefficient = coefficient,
+        coefficientType = runCatching { CoefficientType.valueOf(coefficientType) }
+            .getOrDefault(CoefficientType.UNKNOWN),
+        baseIncome = baseIncome,
+        extraIncome = extraIncome,
+        fetchedAtEpochMs = fetchedAtEpochMs,
+        validUntilEpochMs = validUntilEpochMs,
+        sourceName = sourceName,
+        sourceType = runCatching { SourceType.valueOf(sourceType) }
+            .getOrDefault(SourceType.DEMO_PROVIDER),
+        isRealData = isRealData,
+        isDemo = isDemo,
+        confidence = confidence,
+        demandLevel = runCatching { DemandLevel.valueOf(demandLevel) }
+            .getOrDefault(DemandLevel.ELEVATED),
+        availableVehicleClasses = vehicleClassesCsv.split(",")
+            .filter { it.isNotBlank() }
+            .mapNotNull { runCatching { VehicleClass.valueOf(it) }.getOrNull() },
+        survivalProbability = survivalProbability,
+        coefficientsByClass = byClass.ifEmpty {
+            mapOf(VehicleClass.ECONOMY to coefficient)
+        }
+    )
+}
+
+private fun coefficientsToJson(map: Map<VehicleClass, Double>): String {
+    val o = JSONObject()
+    map.forEach { (k, v) -> o.put(k.name, v) }
+    return o.toString()
+}
+
+private fun coefficientsFromJson(json: String): Map<VehicleClass, Double> = runCatching {
+    val o = JSONObject(json.ifBlank { "{}" })
+    buildMap {
+        o.keys().forEach { key ->
+            val cls = runCatching { VehicleClass.valueOf(key) }.getOrNull() ?: return@forEach
+            put(cls, o.getDouble(key))
+        }
+    }
+}.getOrDefault(emptyMap())
 
 fun City.toEntity(now: Long = System.currentTimeMillis()): CityEntity = CityEntity(
     id = id,

@@ -42,6 +42,7 @@ data class DemandZone(
     val districtName: String,
     val center: GeoPoint,
     val polygon: List<GeoPoint>,
+    /** Основной коэффициент (обычно Эконом) — для рейтинга и цвета зоны */
     val coefficient: Double,
     val coefficientType: CoefficientType,
     val baseIncome: Double,
@@ -55,8 +56,13 @@ data class DemandZone(
     val confidence: Double,
     val demandLevel: DemandLevel,
     val availableVehicleClasses: List<VehicleClass>,
-    val survivalProbability: Double? = null
+    val survivalProbability: Double? = null,
+    /** Коэффициенты по тарифам: Эконом, Комфорт, Детский… */
+    val coefficientsByClass: Map<VehicleClass, Double> = emptyMap()
 ) {
+    fun coefficientFor(vehicleClass: VehicleClass): Double =
+        coefficientsByClass[vehicleClass] ?: coefficient
+
     fun isExpired(nowMs: Long = System.currentTimeMillis()): Boolean =
         nowMs > validUntilEpochMs
 
@@ -72,6 +78,15 @@ data class DemandZone(
         sourceType == SourceType.OFFICIAL_API && isRealData -> DataStatus.REAL
         else -> DataStatus.NONE
     }
+}
+
+/** Строка для подписи над машинкой: «Э ×1.5» */
+data class TariffCoefLabel(
+    val vehicleClass: VehicleClass,
+    val coefficient: Double
+) {
+    val mapText: String
+        get() = "${vehicleClass.shortLabel} ×${"%.1f".format(coefficient)}"
 }
 
 data class ZoneBenefitScore(

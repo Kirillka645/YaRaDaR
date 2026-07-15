@@ -112,6 +112,8 @@ fun MapScreen(
             zoom = 12.0,
             zones = state.filteredZones,
             cameraEpoch = cameraEpoch,
+            driverLocation = state.driverLocation ?: state.city?.center,
+            driverTariffLabels = state.driverTariffLabels,
             onZoneClick = { viewModel.selectZone(it) },
             onMapClick = { viewModel.selectZone(null) },
             modifier = Modifier.fillMaxSize()
@@ -154,6 +156,14 @@ fun MapScreen(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
+                            if (state.driverTariffLabels.isNotEmpty()) {
+                                Text(
+                                    text = "Здесь: " + state.driverTariffLabels.joinToString(" · ") { it.mapText },
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
+                            }
                         }
                         TextButton(onClick = onOpenCityPicker) {
                             Text("Сменить", fontSize = 16.sp)

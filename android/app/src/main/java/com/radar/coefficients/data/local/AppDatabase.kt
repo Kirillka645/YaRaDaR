@@ -11,7 +11,7 @@ import com.radar.coefficients.data.local.entity.TariffEntity
 
 @Database(
     entities = [DemandZoneEntity::class, CityEntity::class, TariffEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

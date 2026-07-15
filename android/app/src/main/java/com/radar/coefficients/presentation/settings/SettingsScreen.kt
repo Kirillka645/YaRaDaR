@@ -111,14 +111,56 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             )
 
             Spacer(Modifier.height(16.dp))
-            Section("Класс авто")
-            VehicleClass.entries.filter { it != VehicleClass.OTHER }.chunked(2).forEach { row ->
+            Section("Тарифы над машинкой на карте")
+            Text(
+                "Выберите, какие кэфы показывать над вашей позицией (Э, К, Д…).",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(Modifier.height(8.dp))
+            VehicleClass.configurable.chunked(2).forEach { row ->
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    row.forEach { cls ->
+                        val on = cls in settings.mapVisibleTariffs
+                        FilterChip(
+                            selected = on,
+                            onClick = {
+                                viewModel.update { s ->
+                                    val next = s.mapVisibleTariffs.toMutableSet()
+                                    if (cls in next) next.remove(cls) else next.add(cls)
+                                    s.copy(
+                                        mapVisibleTariffs = next.ifEmpty {
+                                            setOf(VehicleClass.ECONOMY)
+                                        }
+                                    )
+                                }
+                            },
+                            label = {
+                                Text("${cls.shortLabel} · ${cls.displayNameRu}", fontSize = 14.sp)
+                            },
+                            modifier = Modifier
+                                .padding(end = 8.dp, bottom = 8.dp)
+                                .weight(1f)
+                        )
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+            Text(
+                "Сейчас: " + settings.mapVisibleTariffs
+                    .sortedBy { VehicleClass.configurable.indexOf(it) }
+                    .joinToString(", ") { "${it.shortLabel} (${it.displayNameRu})" },
+                style = MaterialTheme.typography.labelLarge
+            )
+
+            Spacer(Modifier.height(16.dp))
+            Section("Класс авто для расчёта цены")
+            VehicleClass.configurable.chunked(2).forEach { row ->
                 Row(modifier = Modifier.fillMaxWidth()) {
                     row.forEach { cls ->
                         FilterChip(
                             selected = settings.selectedVehicleClass == cls,
                             onClick = { viewModel.update { it.copy(selectedVehicleClass = cls) } },
-                            label = { Text(cls.displayNameRu) },
+                            label = { Text("${cls.shortLabel} ${cls.displayNameRu}") },
                             modifier = Modifier
                                 .padding(end = 8.dp, bottom = 8.dp)
                                 .weight(1f)

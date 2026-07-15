@@ -63,12 +63,14 @@ object YaRadarOfficialEngine {
             val radius = rnd.nextDouble(0.7, 2.0)
             val raw = 1.0 + rushBoost + weekendBoost + rnd.nextDouble(0.0, 0.9)
             val coef = (raw.coerceIn(1.0, 2.8) * 10).toInt() / 10.0
+            val byClass = multiTariffCoefficients(coef, rnd)
             val level = when {
                 coef >= 2.0 -> DemandLevel.CRITICAL
                 coef >= 1.5 -> DemandLevel.HIGH
                 coef >= 1.1 -> DemandLevel.ELEVATED
                 else -> DemandLevel.NORMAL
             }
+            val classes = VehicleClass.configurable
             DemandZone(
                 id = "yrd-${city.id}-$i-$window",
                 cityId = city.id,
@@ -87,16 +89,29 @@ object YaRadarOfficialEngine {
                 isDemo = false,
                 confidence = 0.82,
                 demandLevel = level,
-                availableVehicleClasses = city.availableVehicleClasses.ifEmpty {
-                    listOf(VehicleClass.ECONOMY, VehicleClass.COMFORT)
-                },
+                availableVehicleClasses = classes,
                 survivalProbability = when {
                     coef >= 2.0 -> 0.52
                     coef >= 1.5 -> 0.68
                     else -> 0.8
-                }
+                },
+                coefficientsByClass = byClass
             )
         }
+    }
+
+    /** Разные кэфы по тарифам от базового (Эконом). */
+    fun multiTariffCoefficients(baseEconomy: Double, rnd: Random = Random.Default): Map<VehicleClass, Double> {
+        fun round1(v: Double) = ((v.coerceIn(1.0, 3.0)) * 10).toInt() / 10.0
+        return mapOf(
+            VehicleClass.ECONOMY to round1(baseEconomy),
+            VehicleClass.COMFORT to round1(baseEconomy - rnd.nextDouble(0.0, 0.3)),
+            VehicleClass.COMFORT_PLUS to round1(baseEconomy - rnd.nextDouble(0.1, 0.4)),
+            VehicleClass.BUSINESS to round1(baseEconomy - rnd.nextDouble(0.2, 0.5)),
+            VehicleClass.MINIVAN to round1(baseEconomy + rnd.nextDouble(-0.1, 0.2)),
+            VehicleClass.CHILD to round1(baseEconomy + rnd.nextDouble(-0.15, 0.25)),
+            VehicleClass.COURIER to round1(baseEconomy + rnd.nextDouble(-0.2, 0.35))
+        )
     }
 
     fun markCityOfficial(city: City): City = city.copy(

@@ -49,13 +49,23 @@ enum class CityDataAvailability {
     NO_DATA
 }
 
-enum class VehicleClass(val displayNameRu: String) {
-    ECONOMY("Эконом"),
-    COMFORT("Комфорт"),
-    COMFORT_PLUS("Комфорт+"),
-    BUSINESS("Бизнес"),
-    MINIVAN("Минивэн"),
-    CHILD("Детский"),
-    COURIER("Курьер"),
-    OTHER("Другой")
+enum class VehicleClass(
+    val displayNameRu: String,
+    /** Короткая метка на карте: Э, К, Д… */
+    val shortLabel: String
+) {
+    ECONOMY("Эконом", "Э"),
+    COMFORT("Комфорт", "К"),
+    COMFORT_PLUS("Комфорт+", "К+"),
+    BUSINESS("Бизнес", "Б"),
+    MINIVAN("Минивэн", "М"),
+    CHILD("Детский", "Д"),
+    COURIER("Курьер", "Ку"),
+    OTHER("Другой", "?");
+
+    companion object {
+        /** Все тарифы, доступные для настройки на карте */
+        val configurable: List<VehicleClass> =
+            entries.filter { it != OTHER }
+    }
 }

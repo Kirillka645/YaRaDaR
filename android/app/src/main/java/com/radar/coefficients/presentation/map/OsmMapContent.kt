@@ -17,6 +17,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.radar.coefficients.domain.model.DemandZone
 import com.radar.coefficients.domain.model.GeoPoint
+import com.radar.coefficients.domain.model.TariffCoefLabel
 import com.radar.coefficients.presentation.theme.coefficientColor
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -29,16 +30,14 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-/**
- * OpenStreetMap fallback — карты работают без API-ключа.
- * Используется, если не задан YANDEX_MAPKIT_API_KEY.
- */
 @Composable
 fun OsmMapContent(
     center: GeoPoint,
     zoom: Double,
     zones: List<DemandZone>,
     cameraEpoch: Int,
+    driverLocation: GeoPoint?,
+    driverTariffLabels: List<TariffCoefLabel>,
     onZoneClick: (DemandZone) -> Unit,
     onMapClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -76,7 +75,7 @@ fun OsmMapContent(
         mapView.controller.animateTo(OsmGeoPoint(center.latitude, center.longitude))
     }
 
-    LaunchedEffect(zones, onZoneClick) {
+    LaunchedEffect(zones, driverLocation, driverTariffLabels, onZoneClick) {
         mapView.overlays.clear()
         mapView.overlays.add(
             MapEventsOverlay(object : MapEventsReceiver {
@@ -124,7 +123,7 @@ fun OsmMapContent(
                 title = "×${"%.1f".format(zone.coefficient)}"
                 snippet = zone.districtName
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                icon = makeDot(context, stroke)
+                icon = makeDot(stroke)
                 setOnMarkerClickListener { _, _ ->
                     onZoneClick(zone)
                     true
@@ -132,6 +131,20 @@ fun OsmMapContent(
             }
             mapView.overlays.add(marker)
         }
+
+        // Машинка водителя + кэфы тарифов
+        if (driverLocation != null) {
+            val driverMarker = Marker(mapView).apply {
+                position = OsmGeoPoint(driverLocation.latitude, driverLocation.longitude)
+                title = "Вы здесь"
+                snippet = driverTariffLabels.joinToString(" · ") { it.mapText }
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                icon = DriverMarkerFactory.create(context, driverTariffLabels)
+                setInfoWindow(null)
+            }
+            mapView.overlays.add(driverMarker)
+        }
+
         mapView.invalidate()
     }
 
@@ -141,7 +154,7 @@ fun OsmMapContent(
     )
 }
 
-private fun makeDot(context: android.content.Context, color: Int) =
+private fun makeDot(color: Int) =
     ShapeDrawable(OvalShape()).apply {
         intrinsicWidth = 48
         intrinsicHeight = 48

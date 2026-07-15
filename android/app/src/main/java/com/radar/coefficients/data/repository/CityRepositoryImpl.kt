@@ -138,10 +138,7 @@ class CityRepositoryImpl @Inject constructor(
             bounds = null,
             timeZoneId = country.timeZoneId,
             currencyCode = country.currencyCode,
-            availableVehicleClasses = listOf(
-                VehicleClass.ECONOMY, VehicleClass.COMFORT,
-                VehicleClass.COMFORT_PLUS, VehicleClass.BUSINESS, VehicleClass.MINIVAN
-            ),
+            availableVehicleClasses = VehicleClass.configurable,
             availableTariffs = emptyList(),
             demandDataAvailable = true,
             dataAvailability = CityDataAvailability.REAL_DATA

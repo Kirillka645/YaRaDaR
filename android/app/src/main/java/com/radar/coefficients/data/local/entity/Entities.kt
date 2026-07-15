@@ -24,7 +24,9 @@ data class DemandZoneEntity(
     val confidence: Double,
     val demandLevel: String,
     val vehicleClassesCsv: String,
-    val survivalProbability: Double?
+    val survivalProbability: Double?,
+    /** JSON object: {"ECONOMY":1.5,"COMFORT":1.3,...} */
+    val coefficientsByClassJson: String = "{}"
 )
 
 @Entity(tableName = "cached_cities")
