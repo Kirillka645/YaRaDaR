@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.radar.coefficients.domain.model.AlertThresholdMode
 import com.radar.coefficients.domain.model.GeoPoint
 import com.radar.coefficients.domain.model.MapRadiusFilter
 import com.radar.coefficients.domain.util.DataStatusLabels
@@ -128,6 +129,16 @@ fun MapScreen(
     val mapCenter = state.driverLocation
         ?: state.city?.center
         ?: GeoPoint(57.7679, 40.9269) // Кострома
+    val showCoefOnCar = when (state.settings.alertThresholdMode) {
+        AlertThresholdMode.RUBLES -> false
+        AlertThresholdMode.COEFFICIENT -> true
+        AlertThresholdMode.BOTH -> true
+    }
+    val showRubOnCar = when (state.settings.alertThresholdMode) {
+        AlertThresholdMode.COEFFICIENT -> state.settings.showMoneyOnMap
+        AlertThresholdMode.RUBLES -> true
+        AlertThresholdMode.BOTH -> true
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         // OpenStreetMap — без API-ключа, карты видны сразу
@@ -136,10 +147,12 @@ fun MapScreen(
             zoom = 12.0,
             zones = state.filteredZones,
             cameraEpoch = cameraEpoch,
-            driverLocation = state.driverLocation ?: state.city?.center,
+            driverLocation = state.driverLocation ?: state.city?.center ?: mapCenter,
             driverTariffLabels = state.driverTariffLabels,
             highlightPredictedIgnite = state.settings.highlightPredictedIgnite,
             minCoefForHot = state.settings.minCoefficientAlert,
+            showCoefOnCar = showCoefOnCar,
+            showRubOnCar = showRubOnCar,
             onZoneClick = { viewModel.selectZone(it) },
             onMapClick = { viewModel.selectZone(null) },
             modifier = Modifier.fillMaxSize()
@@ -184,7 +197,9 @@ fun MapScreen(
                             )
                             if (state.driverTariffLabels.isNotEmpty()) {
                                 Text(
-                                    text = "Здесь: " + state.driverTariffLabels.joinToString(" · ") { it.mapText },
+                                    text = "Здесь: " + state.driverTariffLabels.joinToString(" · ") {
+                                        it.mapText(showCoefOnCar, showRubOnCar)
+                                    },
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 15.sp,
                                     color = MaterialTheme.colorScheme.tertiary

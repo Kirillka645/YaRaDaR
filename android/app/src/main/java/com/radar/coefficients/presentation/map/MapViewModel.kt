@@ -9,6 +9,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import com.radar.coefficients.data.provider.TariffFareEstimateProvider
+import com.radar.coefficients.domain.model.AlertThresholdMode
 import com.radar.coefficients.domain.model.City
 import com.radar.coefficients.domain.model.DemandZone
 import com.radar.coefficients.domain.model.FareEstimate
@@ -81,18 +82,21 @@ class MapViewModel @Inject constructor(
             ) { settings, city -> settings to city }
                 .collect { (settings, city) ->
                     _state.update {
+                        val radius = MapRadiusFilter.fromKm(settings.mapRadiusKm)
+                        val filtered = filterZones(it.zones, it.driverLocation, radius, settings)
                         val labels = buildDriverLabels(
-                            location = it.driverLocation,
-                            zones = it.filteredZones.ifEmpty { it.zones },
+                            location = it.driverLocation ?: city?.center,
+                            zones = it.zones.ifEmpty { filtered },
                             visible = settings.mapVisibleTariffs
                         )
                         it.copy(
                             settings = settings,
                             city = city,
+                            radius = radius,
+                            filteredZones = if (it.zones.isNotEmpty()) filtered else it.filteredZones,
                             driverTariffLabels = labels.first,
                             localZone = labels.second,
-                            showTraffic = settings.showTraffic,
-                            radius = MapRadiusFilter.fromKm(settings.mapRadiusKm)
+                            showTraffic = settings.showTraffic
                         )
                     }
                     if (city != null) {
@@ -137,7 +141,7 @@ class MapViewModel @Inject constructor(
             _state.update {
                 val labels = buildDriverLabels(
                     point,
-                    it.filteredZones.ifEmpty { it.zones },
+                    it.zones.ifEmpty { it.filteredZones },
                     it.settings.mapVisibleTariffs
                 )
                 it.copy(
@@ -200,8 +204,8 @@ class MapViewModel @Inject constructor(
                     val allStale = zones.isNotEmpty() && zones.all { it.isStale() }
                     _state.update {
                         val labels = buildDriverLabels(
-                            it.driverLocation,
-                            filtered,
+                            it.driverLocation ?: city.center,
+                            zones, // все зоны — чтобы над машиной всегда были кэфы/₽
                             it.settings.mapVisibleTariffs
                         )
                         it.copy(
@@ -247,8 +251,8 @@ class MapViewModel @Inject constructor(
             _state.update {
                 val filtered = filterZones(it.zones, it.driverLocation, filter, it.settings)
                 val labels = buildDriverLabels(
-                    it.driverLocation,
-                    filtered,
+                    it.driverLocation ?: it.city?.center,
+                    it.zones,
                     it.settings.mapVisibleTariffs
                 )
                 it.copy(
@@ -336,38 +340,60 @@ class MapViewModel @Inject constructor(
             list = list.filter { GeoMath.distanceKm(driver, it.center) <= radius.km }
         }
         if (settings.showOnlyHotZones) {
-            list = list.filter { it.coefficient >= settings.minCoefficientAlert }
+            list = list.filter { isHotZone(it, settings) }
         }
         return list
     }
 
+    /** Зона «горячая» по режиму: кэф / рубли / оба (OR). */
+    private fun isHotZone(zone: DemandZone, settings: UserSettings): Boolean {
+        val byCoef = zone.coefficient >= settings.minCoefficientAlert
+        val byRub = zone.extraIncome >= settings.minExtraIncomeRub
+        return when (settings.alertThresholdMode) {
+            AlertThresholdMode.COEFFICIENT -> byCoef
+            AlertThresholdMode.RUBLES -> byRub
+            AlertThresholdMode.BOTH -> byCoef || byRub
+        }
+    }
+
     /**
-     * Берёт ближайшую зону (или зону, в центре которой вы стоите) и
-     * собирает кэфы для включённых в настройках тарифов.
+     * Ближайшая зона + кэфы/прибавка ₽ для тарифов над машинкой.
+     * Всегда отдаёт хотя бы дефолтные подписи, если зона есть.
      */
     private fun buildDriverLabels(
         location: GeoPoint?,
         zones: List<DemandZone>,
         visible: Set<VehicleClass>
     ): Pair<List<TariffCoefLabel>, DemandZone?> {
-        if (location == null || zones.isEmpty() || visible.isEmpty()) {
-            return emptyList<TariffCoefLabel>() to null
+        val show = visible.ifEmpty { setOf(VehicleClass.ECONOMY) }
+        if (zones.isEmpty()) {
+            // fallback: хотя бы «Э ×1.0 +0 ₽», чтобы пузырь над машиной был
+            val labels = VehicleClass.configurable
+                .filter { it in show }
+                .map { TariffCoefLabel(it, 1.0, 0.0) }
+            return labels to null
         }
-        val nearest = zones.minByOrNull { GeoMath.distanceKm(location, it.center) }
+        val anchor = location ?: zones.first().center
+        val nearest = zones.minByOrNull { GeoMath.distanceKm(anchor, it.center) }
             ?: return emptyList<TariffCoefLabel>() to null
-        val order = VehicleClass.configurable
-        val labels = order
-            .filter { it in visible }
+        val multi = if (nearest.coefficientsByClass.isEmpty()) {
+            YaRadarOfficialEngine.multiTariffCoefficients(nearest.coefficient)
+        } else nearest.coefficientsByClass
+        val labels = VehicleClass.configurable
+            .filter { it in show }
             .map { cls ->
-                val coef = nearest.coefficientFor(cls).let { c ->
-                    if (c <= 0) nearest.coefficient else c
+                val resolved = multi[cls]
+                    ?: nearest.coefficientFor(cls).takeIf { it > 0 }
+                    ?: nearest.coefficient
+                // прибавка по тарифу: base × (кэф−1), пропорционально зоне
+                val extraRub = if (nearest.baseIncome > 0) {
+                    nearest.baseIncome * (resolved - 1.0).coerceAtLeast(0.0)
+                } else {
+                    // если base нет — масштабируем extraIncome зоны
+                    val baseCoef = nearest.coefficient.coerceAtLeast(1.01)
+                    nearest.extraIncome * ((resolved - 1.0) / (baseCoef - 1.0)).coerceAtLeast(0.0)
                 }
-                // если в зоне нет карты тарифов — достраиваем
-                val resolved = if (nearest.coefficientsByClass.isEmpty()) {
-                    YaRadarOfficialEngine.multiTariffCoefficients(nearest.coefficient)[cls]
-                        ?: nearest.coefficient
-                } else coef
-                TariffCoefLabel(cls, resolved)
+                TariffCoefLabel(cls, resolved, extraRub = extraRub.coerceAtLeast(0.0))
             }
         return labels to nearest
     }

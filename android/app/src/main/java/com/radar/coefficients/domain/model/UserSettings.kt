@@ -2,6 +2,10 @@ package com.radar.coefficients.domain.model
 
 data class UserSettings(
     val minCoefficientAlert: Double = 1.5,
+    /** Мин. прибавка в рублях (например 50 ₽), для фильтра и уведомлений */
+    val minExtraIncomeRub: Double = 50.0,
+    /** По чему судить «горячую» зону: кэф / рубли / оба */
+    val alertThresholdMode: AlertThresholdMode = AlertThresholdMode.BOTH,
     val notificationRadiusKm: Int = 5,
     val refreshIntervalMinutes: Int = 3,
     val mapRadiusKm: Int = 10,

@@ -30,6 +30,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.radar.coefficients.domain.model.AlertThresholdMode
 import com.radar.coefficients.domain.model.DisplayCurrency
 import com.radar.coefficients.domain.model.UserSettings
 import com.radar.coefficients.domain.model.VehicleClass
@@ -112,6 +113,72 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             )
 
             Spacer(Modifier.height(16.dp))
+            Section("Порог «горячей» зоны")
+            Text(
+                "Не только ×1.3, а например +50 ₽ прибавки. Так же для фильтра «только горячие» и уведомлений.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = settings.alertThresholdMode == AlertThresholdMode.COEFFICIENT,
+                    onClick = {
+                        viewModel.update { it.copy(alertThresholdMode = AlertThresholdMode.COEFFICIENT) }
+                    },
+                    label = { Text("Только кэф") }
+                )
+                FilterChip(
+                    selected = settings.alertThresholdMode == AlertThresholdMode.RUBLES,
+                    onClick = {
+                        viewModel.update { it.copy(alertThresholdMode = AlertThresholdMode.RUBLES) }
+                    },
+                    label = { Text("Только ₽") }
+                )
+                FilterChip(
+                    selected = settings.alertThresholdMode == AlertThresholdMode.BOTH,
+                    onClick = {
+                        viewModel.update { it.copy(alertThresholdMode = AlertThresholdMode.BOTH) }
+                    },
+                    label = { Text("Кэф + ₽") }
+                )
+            }
+            if (settings.alertThresholdMode != AlertThresholdMode.RUBLES) {
+                Text(
+                    "Мин. коэффициент: ×${"%.1f".format(settings.minCoefficientAlert)}",
+                    fontSize = 18.sp
+                )
+                Slider(
+                    value = settings.minCoefficientAlert.toFloat(),
+                    onValueChange = { v ->
+                        viewModel.update { it.copy(minCoefficientAlert = (v * 10).toInt() / 10.0) }
+                    },
+                    valueRange = 1.1f..3.0f,
+                    steps = 18
+                )
+            }
+            if (settings.alertThresholdMode != AlertThresholdMode.COEFFICIENT) {
+                Text(
+                    "Мин. прибавка: +${settings.minExtraIncomeRub.toInt()} ₽",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Slider(
+                    value = settings.minExtraIncomeRub.toFloat(),
+                    onValueChange = { v ->
+                        // шаг 10 ₽: 0…500
+                        val rounded = ((v / 10f).toInt() * 10).toDouble()
+                        viewModel.update { it.copy(minExtraIncomeRub = rounded) }
+                    },
+                    valueRange = 0f..500f,
+                    steps = 49
+                )
+                Text(
+                    "Пример: зона «горячая», если доп. доход ≥ +${settings.minExtraIncomeRub.toInt()} ₽",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
             Section("Уведомления")
             RowItem("Включить оповещения") {
                 Switch(
@@ -119,15 +186,6 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                     onCheckedChange = { v -> viewModel.update { it.copy(notificationsEnabled = v) } }
                 )
             }
-            Text("Мин. коэффициент: ×${"%.1f".format(settings.minCoefficientAlert)}", fontSize = 18.sp)
-            Slider(
-                value = settings.minCoefficientAlert.toFloat(),
-                onValueChange = { v ->
-                    viewModel.update { it.copy(minCoefficientAlert = (v * 10).toInt() / 10.0) }
-                },
-                valueRange = 1.1f..3.0f,
-                steps = 18
-            )
             Text("Радиус уведомлений: ${settings.notificationRadiusKm} км", fontSize = 18.sp)
             Slider(
                 value = settings.notificationRadiusKm.toFloat(),
@@ -160,7 +218,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 )
             }
             Text(
-                "Скрывать зоны с кэфом ниже мин. (×${"%.1f".format(settings.minCoefficientAlert)})",
+                hotZonesHint(settings),
                 style = MaterialTheme.typography.bodySmall
             )
             RowItem("Автообновление зон") {
@@ -364,6 +422,16 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             )
         }
     }
+}
+
+private fun hotZonesHint(settings: UserSettings): String = when (settings.alertThresholdMode) {
+    AlertThresholdMode.COEFFICIENT ->
+        "Скрывать зоны с кэфом ниже ×${"%.1f".format(settings.minCoefficientAlert)}"
+    AlertThresholdMode.RUBLES ->
+        "Скрывать зоны с прибавкой ниже +${settings.minExtraIncomeRub.toInt()} ₽"
+    AlertThresholdMode.BOTH ->
+        "Скрывать, если и кэф < ×${"%.1f".format(settings.minCoefficientAlert)} " +
+            "и прибавка < +${settings.minExtraIncomeRub.toInt()} ₽"
 }
 
 @Composable

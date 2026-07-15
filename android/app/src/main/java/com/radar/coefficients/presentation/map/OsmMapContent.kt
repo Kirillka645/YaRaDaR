@@ -40,6 +40,8 @@ fun OsmMapContent(
     driverTariffLabels: List<TariffCoefLabel>,
     highlightPredictedIgnite: Boolean = true,
     minCoefForHot: Double = 1.5,
+    showCoefOnCar: Boolean = true,
+    showRubOnCar: Boolean = true,
     onZoneClick: (DemandZone) -> Unit,
     onMapClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -50,6 +52,7 @@ fun OsmMapContent(
         MapView(context).apply {
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
+            isTilesScaledToDpi = true
             controller.setZoom(zoom)
             controller.setCenter(OsmGeoPoint(center.latitude, center.longitude))
         }
@@ -77,13 +80,16 @@ fun OsmMapContent(
         mapView.controller.animateTo(OsmGeoPoint(center.latitude, center.longitude))
     }
 
-    LaunchedEffect(zones, driverLocation, driverTariffLabels, highlightPredictedIgnite, onZoneClick) {
+    LaunchedEffect(
+        zones, driverLocation, driverTariffLabels,
+        highlightPredictedIgnite, showCoefOnCar, showRubOnCar, onZoneClick
+    ) {
         mapView.overlays.clear()
         mapView.overlays.add(
             MapEventsOverlay(object : MapEventsReceiver {
                 override fun singleTapConfirmedHelper(p: OsmGeoPoint?): Boolean {
                     onMapClick()
-                    return true
+                    return false // не блокируем маркеры
                 }
                 override fun longPressHelper(p: OsmGeoPoint?): Boolean = false
             })
@@ -99,7 +105,7 @@ fun OsmMapContent(
                 (color.blue * 255).roundToInt()
             )
             val stroke = if (willIgnite) {
-                AndroidColor.argb(255, 255, 193, 7) // янтарь — прогноз «загорится»
+                AndroidColor.argb(255, 255, 193, 7)
             } else {
                 AndroidColor.argb(
                     230,
@@ -139,8 +145,7 @@ fun OsmMapContent(
             val marker = Marker(mapView).apply {
                 position = OsmGeoPoint(zone.center.latitude, zone.center.longitude)
                 title = "×${"%.1f".format(zone.coefficient)}$forecastHint"
-                snippet = zone.districtName + ordersHint +
-                    if (willIgnite) " · прогноз: загорится" else ""
+                snippet = zone.districtName + ordersHint
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 icon = makeDot(if (willIgnite) AndroidColor.parseColor("#FFC107") else stroke)
                 setOnMarkerClickListener { _, _ ->
@@ -151,25 +156,41 @@ fun OsmMapContent(
             mapView.overlays.add(marker)
         }
 
-        // Машинка водителя + кэфы тарифов
-        if (driverLocation != null) {
-            val driverMarker = Marker(mapView).apply {
-                position = OsmGeoPoint(driverLocation.latitude, driverLocation.longitude)
-                title = "Вы здесь"
-                snippet = driverTariffLabels.joinToString(" · ") { it.mapText }
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                icon = DriverMarkerFactory.create(context, driverTariffLabels)
-                setInfoWindow(null)
+        // Машинка ВСЕГДА поверх зон: позиция водителя или центр карты
+        val carPos = driverLocation ?: center
+        val carIcon = DriverMarkerFactory.create(
+            context = context,
+            labels = driverTariffLabels,
+            showCoef = showCoefOnCar,
+            showRub = showRubOnCar
+        )
+        val driverMarker = Marker(mapView).apply {
+            position = OsmGeoPoint(carPos.latitude, carPos.longitude)
+            title = "Вы здесь"
+            snippet = driverTariffLabels.joinToString(" · ") {
+                it.mapText(showCoefOnCar, showRubOnCar)
             }
-            mapView.overlays.add(driverMarker)
+            // якорь: низ иконки = точка на карте, пузырь сверху
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            icon = carIcon
+            setInfoWindow(null)
+            isFlat = false
+            setOnMarkerClickListener { _, _ -> true }
         }
-
+        mapView.overlays.add(driverMarker)
+        // osmdroid: последний overlay = сверху; дублируем bring-to-front
+        mapView.overlays.remove(driverMarker)
+        mapView.overlays.add(driverMarker)
         mapView.invalidate()
     }
 
     AndroidView(
         factory = { mapView },
-        modifier = modifier.fillMaxSize()
+        modifier = modifier.fillMaxSize(),
+        update = { mv ->
+            // держим машинку поверх при любом update
+            mv.invalidate()
+        }
     )
 }
 
@@ -179,6 +200,7 @@ private fun makeDot(color: Int) =
         intrinsicHeight = 48
         paint.color = color
         paint.style = Paint.Style.FILL
+        setBounds(0, 0, 48, 48)
     }
 
 private fun circlePoints(lat: Double, lon: Double, radiusM: Double, steps: Int = 36): List<OsmGeoPoint> {

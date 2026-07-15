@@ -16,6 +16,9 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.radar.coefficients.R
+import com.radar.coefficients.domain.model.AlertThresholdMode
+import com.radar.coefficients.domain.model.DemandZone
+import com.radar.coefficients.domain.model.UserSettings
 import com.radar.coefficients.domain.repository.CityRepository
 import com.radar.coefficients.domain.repository.DemandRepository
 import com.radar.coefficients.domain.repository.SettingsRepository
@@ -49,24 +52,32 @@ class DemandRefreshWorker @AssistedInject constructor(
         if (lat == null || lon == null) return Result.success()
 
         val driver = com.radar.coefficients.domain.model.GeoPoint(lat, lon)
+        fun inRadius(zone: DemandZone) =
+            GeoMath.distanceKm(driver, zone.center) <= settings.notificationRadiusKm
+
         val hit = zones.firstOrNull { zone ->
-            zone.coefficient >= settings.minCoefficientAlert &&
-                GeoMath.distanceKm(driver, zone.center) <= settings.notificationRadiusKm &&
-                !zone.isDemo
+            isHot(zone, settings) && inRadius(zone) && !zone.isDemo
         } ?: zones.firstOrNull { zone ->
-            // In demo mode still notify but mark as demo
-            settings.demoModeEnabled &&
-                zone.coefficient >= settings.minCoefficientAlert &&
-                GeoMath.distanceKm(driver, zone.center) <= settings.notificationRadiusKm
+            settings.demoModeEnabled && isHot(zone, settings) && inRadius(zone)
         }
 
         if (hit != null) {
-            showSimpleNotification(hit.districtName, hit.coefficient, hit.isDemo)
+            showSimpleNotification(hit, settings)
         }
         return Result.success()
     }
 
-    private fun showSimpleNotification(district: String, coef: Double, isDemo: Boolean) {
+    private fun isHot(zone: DemandZone, settings: UserSettings): Boolean {
+        val byCoef = zone.coefficient >= settings.minCoefficientAlert
+        val byRub = zone.extraIncome >= settings.minExtraIncomeRub
+        return when (settings.alertThresholdMode) {
+            AlertThresholdMode.COEFFICIENT -> byCoef
+            AlertThresholdMode.RUBLES -> byRub
+            AlertThresholdMode.BOTH -> byCoef || byRub
+        }
+    }
+
+    private fun showSimpleNotification(zone: DemandZone, settings: UserSettings) {
         val channelId = "demand_alerts"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -80,11 +91,18 @@ class DemandRefreshWorker @AssistedInject constructor(
             nm.createNotificationChannel(channel)
         }
 
-        val title = if (isDemo) "Демо: зона ×$coef" else "Рядом зона ×$coef"
-        val text = if (isDemo) {
-            "$district · демонстрационные данные"
+        val coefStr = "×${"%.1f".format(zone.coefficient)}"
+        val rubStr = "+${zone.extraIncome.toInt()} ₽"
+        val detail = when (settings.alertThresholdMode) {
+            AlertThresholdMode.RUBLES -> rubStr
+            AlertThresholdMode.COEFFICIENT -> coefStr
+            AlertThresholdMode.BOTH -> "$coefStr · $rubStr"
+        }
+        val title = if (zone.isDemo) "Демо: $detail" else "Рядом зона $detail"
+        val text = if (zone.isDemo) {
+            "${zone.districtName} · демонстрационные данные"
         } else {
-            "$district · коэффициент мог измениться"
+            "${zone.districtName} · ориентир, не Яндекс"
         }
 
         val notification = NotificationCompat.Builder(applicationContext, channelId)

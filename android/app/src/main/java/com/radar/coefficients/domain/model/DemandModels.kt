@@ -123,13 +123,37 @@ data class DemandZone(
     }
 }
 
-/** Строка для подписи над машинкой: «Э ×1.5» */
+/** Строка для подписи над машинкой: «Э ×1.5» или «Э +180 ₽» */
 data class TariffCoefLabel(
     val vehicleClass: VehicleClass,
-    val coefficient: Double
+    val coefficient: Double,
+    /** Ориентировочная прибавка в рублях (к базовому заказу) */
+    val extraRub: Double = 0.0
 ) {
+    fun mapText(showCoef: Boolean, showRub: Boolean): String {
+        val parts = mutableListOf<String>()
+        parts += vehicleClass.shortLabel
+        if (showCoef) parts += "×${"%.1f".format(coefficient)}"
+        if (showRub && extraRub > 0) {
+            parts += "+${extraRub.toInt()} ₽"
+        } else if (showRub && !showCoef) {
+            parts += "+${extraRub.toInt()} ₽"
+        }
+        return parts.joinToString(" ")
+    }
+
     val mapText: String
-        get() = "${vehicleClass.shortLabel} ×${"%.1f".format(coefficient)}"
+        get() = mapText(showCoef = true, showRub = true)
+}
+
+/** Как фильтровать «горячие» зоны и уведомления */
+enum class AlertThresholdMode {
+    /** Только по коэффициенту, напр. ≥ ×1.3 */
+    COEFFICIENT,
+    /** Только по прибавке в рублях, напр. ≥ +50 ₽ */
+    RUBLES,
+    /** И кэф, и рубли */
+    BOTH
 }
 
 data class ZoneBenefitScore(

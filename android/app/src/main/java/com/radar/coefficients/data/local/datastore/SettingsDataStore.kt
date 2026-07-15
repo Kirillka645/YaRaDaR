@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.radar.coefficients.domain.model.AlertThresholdMode
 import com.radar.coefficients.domain.model.DisplayCurrency
 import com.radar.coefficients.domain.model.UserSettings
 import com.radar.coefficients.domain.model.VehicleClass
@@ -27,6 +28,8 @@ class SettingsDataStore @Inject constructor(
 ) {
     private object Keys {
         val minCoef = doublePreferencesKey("min_coef")
+        val minExtraRub = doublePreferencesKey("min_extra_rub")
+        val alertMode = stringPreferencesKey("alert_mode")
         val notifRadius = intPreferencesKey("notif_radius")
         val refreshMin = intPreferencesKey("refresh_min")
         val mapRadius = intPreferencesKey("map_radius")
@@ -66,6 +69,8 @@ class SettingsDataStore @Inject constructor(
         context.dataStore.edit { prefs ->
             val next = transform(prefs.toSettings())
             prefs[Keys.minCoef] = next.minCoefficientAlert
+            prefs[Keys.minExtraRub] = next.minExtraIncomeRub
+            prefs[Keys.alertMode] = next.alertThresholdMode.name
             prefs[Keys.notifRadius] = next.notificationRadiusKm
             prefs[Keys.refreshMin] = next.refreshIntervalMinutes
             prefs[Keys.mapRadius] = next.mapRadiusKm
@@ -107,6 +112,10 @@ class SettingsDataStore @Inject constructor(
             ?: UserSettings.DEFAULT_MAP_TARIFFS
         return UserSettings(
             minCoefficientAlert = this[Keys.minCoef] ?: 1.5,
+            minExtraIncomeRub = this[Keys.minExtraRub] ?: 50.0,
+            alertThresholdMode = this[Keys.alertMode]?.let {
+                runCatching { AlertThresholdMode.valueOf(it) }.getOrNull()
+            } ?: AlertThresholdMode.BOTH,
             notificationRadiusKm = this[Keys.notifRadius] ?: 5,
             refreshIntervalMinutes = this[Keys.refreshMin] ?: 3,
             mapRadiusKm = this[Keys.mapRadius] ?: 10,
