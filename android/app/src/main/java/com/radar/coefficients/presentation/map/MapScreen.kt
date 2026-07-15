@@ -60,6 +60,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.radar.coefficients.domain.model.AlertThresholdMode
 import com.radar.coefficients.domain.model.GeoPoint
 import com.radar.coefficients.domain.model.MapRadiusFilter
+import com.radar.coefficients.domain.model.VehicleClass
 import com.radar.coefficients.domain.util.DataStatusLabels
 import com.radar.coefficients.domain.util.MoneyFormatter
 import com.radar.coefficients.presentation.common.UiMessage
@@ -216,11 +217,18 @@ fun MapScreen(
                                     color = MaterialTheme.colorScheme.tertiary
                                 )
                             }
-                            if (state.settings.showMoneyOnMap && state.localZone != null) {
-                                val z = state.localZone!!
+                            if (state.settings.showMoneyOnMap &&
+                                (state.driverTariffLabels.isNotEmpty() || state.localZone != null)
+                            ) {
+                                val extraHere = state.driverTariffLabels
+                                    .firstOrNull { it.vehicleClass == VehicleClass.ECONOMY }
+                                    ?.extraRub
+                                    ?: state.driverTariffLabels.firstOrNull()?.extraRub
+                                    ?: state.localZone?.extraIncome
+                                    ?: 0.0
                                 Text(
                                     text = "Ориент. доп. доход: " + MoneyFormatter.format(
-                                        z.extraIncome,
+                                        extraHere,
                                         currency,
                                         cityCur,
                                         cityCur

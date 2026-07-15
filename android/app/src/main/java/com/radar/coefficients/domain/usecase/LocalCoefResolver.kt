@@ -5,14 +5,16 @@ import com.radar.coefficients.domain.model.GeoPoint
 import com.radar.coefficients.domain.model.TariffCoefLabel
 import com.radar.coefficients.domain.model.VehicleClass
 import com.radar.coefficients.domain.util.GeoMath
-import kotlin.math.pow
+import kotlin.math.exp
 import kotlin.math.roundToInt
 
 /**
- * Считает кэф и прибавку ₽ **в точке водителя**:
- * — берёт 3 ближайшие зоны;
- * — смешивает кэфы по обратному квадрату расстояния (не «прыгает» на границе);
- * — для каждого тарифа — свой кэф и своя прибавка от базы тарифа.
+ * Кэф и прибавка ₽ **точно в точке** (водитель / метка).
+ *
+ * Правила (чтобы цифры не «врали»):
+ * 1) если точка внутри зоны (≤ радиуса) — берём **эту зону целиком** (кэф, ₽, тарифы, улица);
+ * 2) если рядом (до ~2 км) — плавный спад к 1.0, без смеси «далёких» зон;
+ * 3) если далеко — ×1.0 / +0 ₽, название «Вне зон».
  */
 object LocalCoefResolver {
 
@@ -20,22 +22,13 @@ object LocalCoefResolver {
         val districtName: String,
         val labels: List<TariffCoefLabel>,
         val nearestZone: DemandZone?,
-        /** Смешанный кэф основного тарифа (Эконом) */
         val blendedEconomyCoef: Double,
         val blendedExtraRub: Double,
-        val confidence: Double
-    ) {
-        fun primaryLine(showCoef: Boolean, showRub: Boolean): String {
-            val main = labels.firstOrNull()
-                ?: return if (showCoef) "×1.0" else "+0 ₽"
-            return main.mapText(showCoef, showRub)
-        }
+        val confidence: Double,
+        /** true = точка реально в зоне, цифры «как на маркере» */
+        val insideZone: Boolean = false
+    )
 
-        fun compactLine(showCoef: Boolean, showRub: Boolean, maxTariffs: Int = 3): String =
-            labels.take(maxTariffs).joinToString(" · ") { it.mapText(showCoef, showRub) }
-    }
-
-    /** Множитель базы тарифа относительно эконома (для прибавки ₽). */
     private val baseMultiplier: Map<VehicleClass, Double> = mapOf(
         VehicleClass.ECONOMY to 1.0,
         VehicleClass.COMFORT to 1.35,
@@ -46,10 +39,6 @@ object LocalCoefResolver {
         VehicleClass.COURIER to 0.8
     )
 
-    /**
-     * Смещение кэфа тарифа относительно эконома (реалистичнее, чем чистый random).
-     * Комфорт/бизнес реже «горят» так же сильно; курьер — волатильнее.
-     */
     fun tariffCoefFromEconomy(economy: Double, cls: VehicleClass): Double {
         val offset = when (cls) {
             VehicleClass.ECONOMY -> 0.0
@@ -61,101 +50,159 @@ object LocalCoefResolver {
             VehicleClass.COURIER -> +0.12
             VehicleClass.OTHER -> 0.0
         }
-        // при сильном surge разрыв тарифов чуть сжимается
         val squeeze = if (economy >= 1.8) 0.7 else 1.0
         return round1((economy + offset * squeeze).coerceIn(1.0, 3.0))
     }
 
     fun extraRubFor(coef: Double, baseIncome: Double, vehicleClass: VehicleClass): Double {
         val mult = baseMultiplier[vehicleClass] ?: 1.0
-        val base = baseIncome * mult
-        // прибавка = (кэф−1) × база; минимум 0
+        val base = baseIncome.coerceAtLeast(100.0) * mult
         return (base * (coef - 1.0).coerceAtLeast(0.0)).coerceAtLeast(0.0)
     }
 
     fun resolveAt(
         location: GeoPoint?,
         zones: List<DemandZone>,
-        visible: Set<VehicleClass>,
-        maxNeighbors: Int = 3
+        visible: Set<VehicleClass>
     ): PointSnapshot {
         val show = visible.ifEmpty { setOf(VehicleClass.ECONOMY) }
         if (zones.isEmpty()) {
-            val labels = VehicleClass.configurable
-                .filter { it in show }
-                .map { TariffCoefLabel(it, 1.0, 0.0) }
-            return PointSnapshot("—", labels, null, 1.0, 0.0, 0.0)
+            return emptySnap(show, "Нет зон")
+        }
+        val anchor = location ?: zones.minByOrNull {
+            // если нет GPS — центр «самой горячей» рядом с медианой
+            -it.heatScore.toDouble()
+        }?.center ?: return emptySnap(show, "—")
+
+        // Зона + расстояние до центра + эффективный радиус
+        data class Hit(val zone: DemandZone, val distKm: Double, val radiusKm: Double) {
+            val inside: Boolean get() = distKm <= radiusKm * 1.02
         }
 
-        val anchor = location ?: zones.first().center
-        val ranked = zones
-            .map { it to GeoMath.distanceKm(anchor, it.center) }
-            .sortedBy { it.second }
-        val nearest = ranked.first().first
-        val neighbors = ranked.take(maxNeighbors)
+        val hits = zones.map { z ->
+            val r = zoneRadiusKm(z)
+            Hit(z, GeoMath.distanceKm(anchor, z.center), r)
+        }.sortedWith(
+            compareBy<Hit> { !it.inside } // сначала «внутри»
+                .thenBy { it.distKm }
+        )
 
-        // если стоим почти в центре зоны — берём её без смешивания
-        val veryClose = neighbors.first().second < 0.35
-        val economyCoef: Double
-        val baseIncome: Double
-        val conf: Double
-        val name: String
+        val best = hits.first()
+        val zone = best.zone
 
-        if (veryClose || neighbors.size == 1) {
-            economyCoef = nearest.coefficient.coerceIn(1.0, 3.0)
-            baseIncome = nearest.baseIncome.coerceAtLeast(200.0)
-            conf = nearest.confidence
-            name = nearest.districtName
-        } else {
-            // weight = 1 / (d² + ε)
-            val weights = neighbors.map { (_, d) -> 1.0 / (d.pow(2) + 0.15) }
-            val sumW = weights.sum().coerceAtLeast(1e-6)
-            economyCoef = neighbors.mapIndexed { i, (z, _) ->
-                z.coefficient * weights[i]
-            }.sum() / sumW
-            baseIncome = neighbors.mapIndexed { i, (z, _) ->
-                z.baseIncome * weights[i]
-            }.sum() / sumW
-            conf = neighbors.mapIndexed { i, (z, _) ->
-                z.confidence * weights[i]
-            }.sum() / sumW
-            name = nearest.districtName
+        return when {
+            // 1) Внутри зоны — точные данные зоны (как на маркере)
+            best.inside -> {
+                val labels = labelsFromZone(zone, show, scale = 1.0)
+                PointSnapshot(
+                    districtName = zone.districtName,
+                    labels = labels,
+                    nearestZone = zone,
+                    blendedEconomyCoef = round1(zone.coefficient),
+                    blendedExtraRub = labels.economyExtra(),
+                    confidence = zone.confidence,
+                    insideZone = true
+                )
+            }
+            // 2) Рядом с зоной — спад кэфа, без подмешивания чужих районов
+            best.distKm <= 2.2 -> {
+                val edge = best.radiusKm.coerceAtLeast(0.3)
+                // 1 на границе → 0 на ~2.2 км
+                val t = ((best.distKm - edge) / (2.2 - edge).coerceAtLeast(0.4)).coerceIn(0.0, 1.0)
+                val decay = exp(-2.2 * t) // плавно к 0
+                val scale = decay.coerceIn(0.0, 1.0)
+                val econ = round1(1.0 + (zone.coefficient - 1.0) * scale)
+                val labels = labelsFromZone(zone, show, scale = scale, forceEconomy = econ)
+                PointSnapshot(
+                    districtName = "≈ ${zone.districtName}",
+                    labels = labels,
+                    nearestZone = zone,
+                    blendedEconomyCoef = econ,
+                    blendedExtraRub = labels.economyExtra(),
+                    confidence = zone.confidence * scale * 0.85,
+                    insideZone = false
+                )
+            }
+            // 3) Далеко — нет смысла показывать чужой кэф
+            else -> {
+                val labels = VehicleClass.configurable
+                    .filter { it in show }
+                    .map { TariffCoefLabel(it, 1.0, 0.0) }
+                PointSnapshot(
+                    districtName = "Вне зон спроса",
+                    labels = labels,
+                    nearestZone = zone,
+                    blendedEconomyCoef = 1.0,
+                    blendedExtraRub = 0.0,
+                    confidence = 0.2,
+                    insideZone = false
+                )
+            }
         }
+    }
 
-        val econ = round1(economyCoef.coerceIn(1.0, 3.0))
-        val labels = VehicleClass.configurable
+    /** Радиус зоны: от центра до вершины полигона (км). */
+    fun zoneRadiusKm(zone: DemandZone): Double {
+        val poly = zone.polygon
+        if (poly.size >= 3) {
+            val avg = poly.take(poly.size.coerceAtMost(8))
+                .map { GeoMath.distanceKm(zone.center, it) }
+                .average()
+            if (avg.isFinite() && avg > 0.15) return avg.coerceIn(0.25, 4.0)
+        }
+        return 0.9
+    }
+
+    private fun labelsFromZone(
+        zone: DemandZone,
+        show: Set<VehicleClass>,
+        scale: Double,
+        forceEconomy: Double? = null
+    ): List<TariffCoefLabel> {
+        val econBase = forceEconomy ?: zone.coefficient
+        val multi = zone.coefficientsByClass.ifEmpty {
+            VehicleClass.configurable.associateWith { tariffCoefFromEconomy(econBase, it) }
+        }
+        return VehicleClass.configurable
             .filter { it in show }
             .map { cls ->
-                // если в ближайшей зоне есть точный кэф тарифа — слегка подмешиваем
-                val fromZone = nearest.coefficientsByClass[cls]
-                val derived = tariffCoefFromEconomy(econ, cls)
-                val coef = when {
-                    fromZone != null && veryClose -> round1(fromZone)
-                    fromZone != null -> round1(fromZone * 0.45 + derived * 0.55)
-                    else -> derived
+                val raw = when (cls) {
+                    VehicleClass.ECONOMY -> econBase
+                    else -> {
+                        val zc = multi[cls]
+                        if (zc != null && forceEconomy == null && scale >= 0.99) zc
+                        else tariffCoefFromEconomy(econBase, cls)
+                    }
                 }
-                val extra = if (nearest.extraIncome > 0 && cls == VehicleClass.ECONOMY && veryClose) {
-                    // согласуем с zone.extraIncome для эконома в центре
-                    nearest.extraIncome
+                val coef = if (scale >= 0.99) {
+                    round1(raw)
                 } else {
-                    extraRubFor(coef, baseIncome, cls)
+                    round1(1.0 + (raw - 1.0) * scale)
+                }
+                val extra = when {
+                    scale >= 0.99 && cls == VehicleClass.ECONOMY && zone.extraIncome > 0 ->
+                        zone.extraIncome
+                    else -> extraRubFor(coef, zone.baseIncome, cls)
                 }
                 TariffCoefLabel(cls, coef, extraRub = extra.roundToInt().toDouble())
             }
+    }
 
-        val mainExtra = labels.firstOrNull { it.vehicleClass == VehicleClass.ECONOMY }?.extraRub
-            ?: labels.firstOrNull()?.extraRub
+    private fun List<TariffCoefLabel>.economyExtra(): Double =
+        firstOrNull { it.vehicleClass == VehicleClass.ECONOMY }?.extraRub
+            ?: firstOrNull()?.extraRub
             ?: 0.0
 
-        return PointSnapshot(
-            districtName = name,
-            labels = labels,
-            nearestZone = nearest,
-            blendedEconomyCoef = econ,
-            blendedExtraRub = mainExtra,
-            confidence = conf
-        )
-    }
+    private fun emptySnap(show: Set<VehicleClass>, name: String) = PointSnapshot(
+        districtName = name,
+        labels = VehicleClass.configurable.filter { it in show }
+            .map { TariffCoefLabel(it, 1.0, 0.0) },
+        nearestZone = null,
+        blendedEconomyCoef = 1.0,
+        blendedExtraRub = 0.0,
+        confidence = 0.0,
+        insideZone = false
+    )
 
     private fun round1(v: Double): Double =
         ((v * 10.0).roundToInt() / 10.0).coerceIn(1.0, 3.0)

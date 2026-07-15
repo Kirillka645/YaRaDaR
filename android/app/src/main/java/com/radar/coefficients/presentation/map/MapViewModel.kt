@@ -107,7 +107,7 @@ class MapViewModel @Inject constructor(
                             driverTariffLabels = labels.first,
                             localZone = labels.second,
                             pinTariffLabels = pin.labels,
-                            pinDistrictName = pin.district,
+                            // улицу метки не затираем (она из geocoder)
                             pinEconomyCoef = pin.coef,
                             pinExtraRub = pin.extra,
                             showTraffic = settings.showTraffic
@@ -230,7 +230,6 @@ class MapViewModel @Inject constructor(
                             driverTariffLabels = labels.first,
                             localZone = labels.second,
                             pinTariffLabels = pin.labels,
-                            pinDistrictName = pin.district,
                             pinEconomyCoef = pin.coef,
                             pinExtraRub = pin.extra,
                             lastUpdatedAt = demandRepository.getLastUpdatedAt(),
@@ -354,9 +353,12 @@ class MapViewModel @Inject constructor(
             val s = _state.value
             val zones = s.zones.ifEmpty { s.filteredZones }
             val pin = recomputePin(point, zones, s.settings.mapVisibleTariffs)
-            // Улица именно в точке метки (центр «пробника»)
+            // Улица в координатах метки; кэф — из зоны, в которой точка (или спад)
             val street = runCatching {
-                streetLabels.labelAt(point, fallback = pin.district ?: "Метка")
+                streetLabels.labelAt(
+                    point,
+                    fallback = pin.district?.removePrefix("≈ ")?.trim() ?: "Метка"
+                )
             }.getOrDefault(pin.district ?: "Метка")
             _state.update {
                 it.copy(

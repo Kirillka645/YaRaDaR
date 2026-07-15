@@ -9,9 +9,7 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -23,22 +21,23 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Название точки по центру зоны: **улица** (по возможности с номером дома).
- * Android Geocoder → при неудаче OSM Nominatim.
+ * Улица в координатах центра зоны.
+ * Geocoder (устройство) → при неудаче Nominatim (последовательно, без 429).
  */
 @Singleton
 class StreetLabelResolver @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
-    private val cache = object : LinkedHashMap<String, String>(128, 0.75f, true) {
+    private val cache = object : LinkedHashMap<String, String>(160, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean =
-            size > 200
+            size > 220
     }
     private val cacheMutex = Mutex()
+    private val netMutex = Mutex() // Nominatim — не параллелить
 
     private val http = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
         .build()
 
     private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
@@ -54,36 +53,33 @@ class StreetLabelResolver @Inject constructor(
         val resolved = withContext(Dispatchers.IO) {
             reverseAndroid(lat, lon)
                 ?: reverseNominatim(lat, lon)
-                ?: fallback
-        }.trim().ifBlank { fallback }
+                ?: simplifyFallback(fallback)
+        }.let { cleanLabel(it) }.ifBlank { simplifyFallback(fallback) }
 
         cacheMutex.withLock { cache[key] = resolved }
         return resolved
     }
 
-    /** Подписать зоны улицей в центре полигона / якоря. */
-    suspend fun enrichZones(zones: List<DemandZone>): List<DemandZone> = coroutineScope {
-        if (zones.isEmpty()) return@coroutineScope zones
-        zones.map { zone ->
-            async {
-                val street = labelAt(
-                    zone.center.latitude,
-                    zone.center.longitude,
-                    fallback = simplifyFallback(zone.districtName)
-                )
-                if (street == zone.districtName) zone else zone.copy(districtName = street)
-            }
-        }.awaitAll()
+    /** По очереди — стабильные улицы, без гонки и rate-limit. */
+    suspend fun enrichZones(zones: List<DemandZone>): List<DemandZone> {
+        if (zones.isEmpty()) return zones
+        return zones.mapIndexed { idx, zone ->
+            if (idx > 0) delay(40)
+            val street = labelAt(
+                zone.center.latitude,
+                zone.center.longitude,
+                fallback = simplifyFallback(zone.districtName)
+            )
+            if (street == zone.districtName) zone else zone.copy(districtName = street)
+        }
     }
 
     private fun simplifyFallback(raw: String): String {
-        // "Центр · Кострома" → "Центр" (город убираем — улица важнее)
         val left = raw.substringBefore(" · ").trim()
         return left.ifBlank { raw }.ifBlank { "Район" }
     }
 
     private fun cacheKey(lat: Double, lon: Double): String =
-        // ~11 м точность — стабильные подписи при мелком дрейфе
         "%.4f,%.4f".format(Locale.US, lat, lon)
 
     private fun reverseAndroid(lat: Double, lon: Double): String? {
@@ -91,53 +87,61 @@ class StreetLabelResolver @Inject constructor(
         return runCatching {
             val geocoder = Geocoder(context, Locale("ru", "RU"))
             @Suppress("DEPRECATION")
-            val list = geocoder.getFromLocation(lat, lon, 3).orEmpty()
-            list.firstNotNullOfOrNull { formatAddress(it) }
-                ?: list.firstNotNullOfOrNull { formatAddressLoose(it) }
+            val list = geocoder.getFromLocation(lat, lon, 5).orEmpty()
+            list.asSequence()
+                .mapNotNull { formatAddress(it) }
+                .firstOrNull()
         }.getOrNull()
     }
 
     private fun formatAddress(a: android.location.Address): String? {
-        val street = a.thoroughfare?.trim()?.takeIf { it.isNotEmpty() && !isCityOnly(it, a) }
-            ?: return null
-        val house = a.subThoroughfare?.trim()?.takeIf { it.isNotEmpty() }
-        val pretty = prettifyStreet(street)
-        return if (house != null) "$pretty, $house" else pretty
-    }
-
-    private fun formatAddressLoose(a: android.location.Address): String? {
-        val feature = a.featureName?.trim().orEmpty()
-        val street = a.thoroughfare?.trim().orEmpty()
-        val subLocality = a.subLocality?.trim().orEmpty()
         val locality = a.locality?.trim().orEmpty()
+        val admin = a.adminArea?.trim().orEmpty()
+        val thoroughfare = a.thoroughfare?.trim().orEmpty()
+        val sub = a.subThoroughfare?.trim().orEmpty()
+        val feature = a.featureName?.trim().orEmpty()
+        val subLocality = a.subLocality?.trim().orEmpty()
 
-        // featureName часто = номер дома или POI
-        when {
-            street.isNotEmpty() -> {
-                val pretty = prettifyStreet(street)
-                val house = a.subThoroughfare?.trim()
-                    ?: feature.takeIf { it.matches(Regex("^\\d+[А-Яа-яA-Za-z/\\-]*$")) }
-                return if (!house.isNullOrBlank() && house != pretty) "$pretty, $house" else pretty
+        // 1) нормальная улица
+        if (thoroughfare.isNotEmpty() &&
+            !thoroughfare.equals(locality, true) &&
+            !thoroughfare.equals(admin, true) &&
+            !looksLikeCoords(thoroughfare)
+        ) {
+            val pretty = prettifyStreet(thoroughfare)
+            val house = when {
+                sub.isNotEmpty() -> sub
+                feature.matches(HOUSE_RE) && feature != thoroughfare -> feature
+                else -> null
             }
-            feature.isNotEmpty() &&
-                feature != locality &&
-                !feature.equals(a.adminArea, true) &&
-                feature.length in 3..48 -> return feature
-            subLocality.isNotEmpty() -> return subLocality
-            else -> return null
+            return if (house != null) "$pretty, $house" else pretty
         }
-    }
 
-    private fun isCityOnly(name: String, a: android.location.Address): Boolean {
-        val city = a.locality?.trim().orEmpty()
-        return city.isNotEmpty() && name.equals(city, ignoreCase = true)
+        // 2) feature как «ул. X» целиком
+        if (feature.isNotEmpty() &&
+            feature != locality &&
+            !feature.equals(admin, true) &&
+            !looksLikeCoords(feature) &&
+            feature.length in 4..56 &&
+            !feature.matches(HOUSE_RE)
+        ) {
+            // часто "12" уже отфильтровали; "микрорайон X" ок
+            return if (STREET_HINT.containsMatchIn(feature)) {
+                prettifyStreet(feature)
+            } else if (subLocality.isNotEmpty()) {
+                subLocality
+            } else {
+                feature
+            }
+        }
+
+        if (subLocality.isNotEmpty() && subLocality != locality) return subLocality
+        return null
     }
 
     private fun prettifyStreet(raw: String): String {
-        val s = raw.trim()
-            .replace(Regex("\\s+"), " ")
-        // Уже «улица …» / «ул. …» / «проспект …»
-        if (s.contains(Regex("(?i)(улица|ул\\.|проспект|пр-т|пр\\.|переулок|пер\\.|шоссе|бульвар|б-р|площадь|пл\\.|набережная|наб\\.)"))) {
+        val s = raw.trim().replace(Regex("\\s+"), " ")
+        if (STREET_HINT.containsMatchIn(s)) {
             return s
                 .replace(Regex("(?i)^улица\\s+"), "ул. ")
                 .replace(Regex("(?i)^проспект\\s+"), "пр-т ")
@@ -146,57 +150,62 @@ class StreetLabelResolver @Inject constructor(
                 .replace(Regex("(?i)^площадь\\s+"), "пл. ")
                 .replace(Regex("(?i)^набережная\\s+"), "наб. ")
                 .replace(Regex("(?i)^шоссе\\s+"), "ш. ")
+                .replace(Regex("(?i)^проезд\\s+"), "пр. ")
         }
-        // Голое имя — по умолчанию улица
+        // не добавляем «ул.» к «мкр …», «СНТ …»
+        if (s.contains(Regex("(?i)(мкр|микрорайон|снт|пос[её]лок|квартал|жк\\b)"))) {
+            return s
+        }
         return "ул. $s"
     }
 
-    private fun reverseNominatim(lat: Double, lon: Double): String? {
-        return runCatching {
-            val url =
-                "https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lon" +
-                    "&format=json&zoom=18&addressdetails=1&accept-language=ru"
-            val req = Request.Builder()
-                .url(url)
-                .header("User-Agent", "YaRaDaR/1.0 (taxi coefficient radar; offline-first)")
-                .get()
-                .build()
-            http.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@use null
-                val body = resp.body?.string() ?: return@use null
-                val parsed = nominatimAdapter.fromJson(body) ?: return@use null
-                val addr = parsed.address ?: return@use null
-                val road = listOfNotNull(
-                    addr.road,
-                    addr.pedestrian,
-                    addr.footway,
-                    addr.path,
-                    addr.residential
-                ).firstOrNull { it.isNotBlank() }
-                if (road != null) {
-                    val house = addr.houseNumber?.takeIf { it.isNotBlank() }
-                    val pretty = prettifyStreet(road)
-                    return@use if (house != null) "$pretty, $house" else pretty
-                }
-                listOfNotNull(
-                    addr.neighbourhood,
-                    addr.suburb,
-                    addr.quarter,
-                    addr.cityDistrict
-                ).firstOrNull { !it.isNullOrBlank() }?.trim()
-            }
-        }.getOrNull()
-    }
+    private fun cleanLabel(s: String): String =
+        s.trim()
+            .replace(Regex("\\s+,"), ",")
+            .replace(Regex(",\\s*"), ", ")
+            .take(64)
 
-    private data class NominatimReverse(
-        val address: NominatimAddress? = null
-    )
+    private fun looksLikeCoords(s: String): Boolean =
+        s.matches(Regex("""^-?\d+[.,]\d+.*"""))
+
+    private suspend fun reverseNominatim(lat: Double, lon: Double): String? =
+        netMutex.withLock {
+            runCatching {
+                delay(200) // ~1 req / 200ms — мягче к Nominatim
+                val url =
+                    "https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lon" +
+                        "&format=json&zoom=17&addressdetails=1&accept-language=ru"
+                val req = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "YaRaDaR/1.0.8 (https://github.com/Kirillka645/YaRaDaR)")
+                    .get()
+                    .build()
+                http.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use null
+                    val body = resp.body?.string() ?: return@use null
+                    val parsed = nominatimAdapter.fromJson(body) ?: return@use null
+                    val addr = parsed.address ?: return@use null
+                    val road = listOfNotNull(
+                        addr.road, addr.pedestrian, addr.residential, addr.footway
+                    ).firstOrNull { !it.isNullOrBlank() }
+                    if (road != null) {
+                        val pretty = prettifyStreet(road)
+                        val house = addr.houseNumber?.takeIf { it.isNotBlank() }
+                        return@use if (house != null) "$pretty, $house" else pretty
+                    }
+                    listOfNotNull(
+                        addr.neighbourhood, addr.suburb, addr.quarter, addr.cityDistrict
+                    ).firstOrNull { !it.isNullOrBlank() }?.trim()
+                }
+            }.getOrNull()
+        }
+
+    private data class NominatimReverse(val address: NominatimAddress? = null)
 
     private data class NominatimAddress(
         val road: String? = null,
         val pedestrian: String? = null,
         val footway: String? = null,
-        val path: String? = null,
         val residential: String? = null,
         @Json(name = "house_number") val houseNumber: String? = null,
         val neighbourhood: String? = null,
@@ -204,4 +213,11 @@ class StreetLabelResolver @Inject constructor(
         val quarter: String? = null,
         @Json(name = "city_district") val cityDistrict: String? = null
     )
+
+    companion object {
+        private val HOUSE_RE = Regex("""^\d+[А-Яа-яA-Za-z/\-]*$""")
+        private val STREET_HINT = Regex(
+            "(?i)(улица|ул\\.|проспект|пр-т|пр\\.|переулок|пер\\.|шоссе|бульвар|б-р|площадь|пл\\.|набережная|наб\\.|проезд)"
+        )
+    }
 }
