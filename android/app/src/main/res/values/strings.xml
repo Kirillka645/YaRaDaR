@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Радар коэффициентов</string>
+    <string name="not_official">Приложение не является официальным продуктом Яндекса</string>
+    <string name="demo_banner">Демонстрационные данные — не использовать для рабочих решений</string>
+    <string name="real_unavailable">Реальные коэффициенты для этого города сейчас недоступны</string>
+    <string name="coef_may_change">Коэффициент может измениться до прибытия</string>
+    <string name="fare_disclaimer">Это ориентировочный расчёт, а не гарантированная стоимость заказа. Итоговая цена определяется сервисом такси при оформлении поездки</string>
+</resources>

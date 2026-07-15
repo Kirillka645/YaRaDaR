@@ -1,0 +1,18 @@
+*.iml
+.gradle/
+**/build/
+.idea/
+local.properties
+*.ap_
+*.dex
+.env
+.DS_Store
+captures/
+.kotlin/
+*.log
+*.jks
+*.keystore
+# Keep published APK under releases/
+android/app/build/
+backend/build/
+!releases/**/*.apk
