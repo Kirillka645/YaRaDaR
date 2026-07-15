@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -46,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -55,6 +57,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.radar.coefficients.domain.model.GeoPoint
 import com.radar.coefficients.domain.model.MapRadiusFilter
 import com.radar.coefficients.domain.util.DataStatusLabels
+import com.radar.coefficients.domain.util.MoneyFormatter
 import com.radar.coefficients.presentation.common.UiMessage
 import com.radar.coefficients.presentation.components.CoefficientBadge
 import com.radar.coefficients.presentation.components.DisclaimerBanner
@@ -64,6 +67,7 @@ import com.radar.coefficients.presentation.theme.TouchTargetMin
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -73,7 +77,27 @@ fun MapScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val view = LocalView.current
     var cameraEpoch by remember { mutableIntStateOf(0) }
+    val currency = state.settings.displayCurrency
+    val cityCur = state.city?.currencyCode ?: "RUB"
+
+    // Не гасить экран
+    DisposableEffect(state.settings.keepScreenOn) {
+        val holder = view.keepScreenOn
+        view.keepScreenOn = state.settings.keepScreenOn
+        onDispose { view.keepScreenOn = holder }
+    }
+
+    // Автообновление
+    LaunchedEffect(state.settings.autoRefreshEnabled, state.settings.refreshIntervalMinutes, state.city?.id) {
+        if (!state.settings.autoRefreshEnabled) return@LaunchedEffect
+        val period = state.settings.refreshIntervalMinutes.coerceAtLeast(1) * 60_000L
+        while (true) {
+            delay(period)
+            viewModel.refresh()
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -164,6 +188,19 @@ fun MapScreen(
                                     color = MaterialTheme.colorScheme.tertiary
                                 )
                             }
+                            if (state.settings.showMoneyOnMap && state.localZone != null) {
+                                val z = state.localZone!!
+                                Text(
+                                    text = "Ориент. доп. доход: " + MoneyFormatter.format(
+                                        z.extraIncome,
+                                        currency,
+                                        cityCur,
+                                        cityCur
+                                    ),
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp
+                                )
+                            }
                         }
                         TextButton(onClick = onOpenCityPicker) {
                             Text("Сменить", fontSize = 16.sp)
@@ -172,7 +209,18 @@ fun MapScreen(
                     val updated = state.lastUpdatedAt?.let {
                         SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(it))
                     } ?: "—"
-                    Text("Обновлено: $updated", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "Обновлено: $updated · валюта ${MoneyFormatter.resolveDisplay(currency, cityCur).symbol}",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    if (state.settings.shiftStartedAtEpochMs > 0) {
+                        val mins = ((System.currentTimeMillis() - state.settings.shiftStartedAtEpochMs) / 60_000).toInt()
+                        Text(
+                            "Смена: $mins мин · проверок: ${state.settings.shiftZonesChecked}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                     if (!state.realDataAvailable) {
                         Text(
                             DataStatusLabels.REAL_UNAVAILABLE,
@@ -254,27 +302,56 @@ fun MapScreen(
                     Spacer(Modifier.height(12.dp))
                     SourceMetaRow(zone)
                     Spacer(Modifier.height(12.dp))
+                    // Кэфы по тарифам в зоне
+                    if (zone.coefficientsByClass.isNotEmpty()) {
+                        Text("Кэфы по тарифам", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            zone.coefficientsByClass.entries
+                                .sortedBy { it.key.ordinal }
+                                .joinToString(" · ") { "${it.key.shortLabel} ×${"%.1f".format(it.value)}" }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
                     state.selectedScore?.let { score ->
                         Text("До зоны: ${"%.1f".format(score.distanceKm)} км · ${score.directionLabelRu}")
                         Text(
                             "В пути: ~${score.travelTimeWithTrafficMinutes ?: score.travelTimeMinutes} мин" +
                                 if (score.travelTimeWithTrafficMinutes == null) " (без пробок)" else ""
                         )
+                        val travelMin = (score.travelTimeWithTrafficMinutes ?: score.travelTimeMinutes).coerceAtLeast(1)
+                        val hourly = score.expectedNetBenefit * (60.0 / travelMin)
                         Text(
-                            "Ориент. выгода: ${"%.0f".format(score.expectedNetBenefit)} ${state.city?.currencyCode ?: ""}",
+                            "Ориент. выгода: " + MoneyFormatter.format(
+                                score.expectedNetBenefit, currency, cityCur, cityCur, withPlus = true
+                            ),
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp
                         )
-                        Text("Доп. доход (ориент.): ${"%.0f".format(score.expectedGrossExtra)}")
+                        Text(
+                            "Доп. доход: " + MoneyFormatter.format(
+                                score.expectedGrossExtra, currency, cityCur, cityCur
+                            )
+                        )
+                        Text(
+                            "Темп: " + MoneyFormatter.formatPerHour(hourly, currency, cityCur, cityCur),
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        Text(
+                            "Топливо: " + MoneyFormatter.format(score.fuelCost, currency, cityCur, cityCur) +
+                                " · время: " + MoneyFormatter.format(score.timeCost, currency, cityCur, cityCur)
+                        )
                     }
                     state.selectedFare?.let { fare ->
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Примерная цена поездки: ${fare.range.min.toInt()}–${fare.range.max.toInt()} ${fare.range.currencyCode}",
+                            "Примерная цена: " + MoneyFormatter.formatRange(fare.range, currency, cityCur),
                             fontWeight = FontWeight.SemiBold
                         )
                         state.selectedFareBase?.let { base ->
-                            Text("Без коэффициента: ${base.range.min.toInt()}–${base.range.max.toInt()} ${base.range.currencyCode}")
+                            Text(
+                                "Без коэффициента: " +
+                                    MoneyFormatter.formatRange(base.range, currency, cityCur)
+                            )
                         }
                         Text(fare.disclaimerRu, style = MaterialTheme.typography.bodySmall)
                     }
@@ -294,6 +371,21 @@ fun MapScreen(
                             .height(TouchTargetMin)
                     ) {
                         Text("Маршрут в Яндекс Картах", fontSize = 18.sp)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            val clip = android.content.ClipData.newPlainText(
+                                "coords",
+                                "${zone.center.latitude},${zone.center.longitude}"
+                            )
+                            val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                as android.content.ClipboardManager
+                            cm.setPrimaryClip(clip)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Скопировать координаты")
                     }
                     Spacer(Modifier.height(24.dp))
                 }

@@ -190,7 +190,13 @@ class MapViewModel @Inject constructor(
             val real = demandRepository.isRealTimeAvailable(city.id)
             result.fold(
                 onSuccess = { zones ->
-                    val filtered = filterZones(zones, _state.value.driverLocation, _state.value.radius)
+                    val settings = _state.value.settings
+                    val filtered = filterZones(
+                        zones,
+                        _state.value.driverLocation,
+                        _state.value.radius,
+                        settings
+                    )
                     val allStale = zones.isNotEmpty() && zones.all { it.isStale() }
                     _state.update {
                         val labels = buildDriverLabels(
@@ -214,6 +220,12 @@ class MapViewModel @Inject constructor(
                             }
                         )
                     }
+                    // счётчик смены
+                    if (settings.shiftStartedAtEpochMs > 0) {
+                        settingsRepository.updateSettings {
+                            it.copy(shiftZonesChecked = it.shiftZonesChecked + 1)
+                        }
+                    }
                 },
                 onFailure = { e ->
                     _state.update {
@@ -233,7 +245,7 @@ class MapViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.updateSettings { it.copy(mapRadiusKm = filter.km) }
             _state.update {
-                val filtered = filterZones(it.zones, it.driverLocation, filter)
+                val filtered = filterZones(it.zones, it.driverLocation, filter, it.settings)
                 val labels = buildDriverLabels(
                     it.driverLocation,
                     filtered,
@@ -316,10 +328,17 @@ class MapViewModel @Inject constructor(
     private fun filterZones(
         zones: List<DemandZone>,
         driver: GeoPoint?,
-        radius: MapRadiusFilter
+        radius: MapRadiusFilter,
+        settings: UserSettings = _state.value.settings
     ): List<DemandZone> {
-        if (driver == null) return zones
-        return zones.filter { GeoMath.distanceKm(driver, it.center) <= radius.km }
+        var list = zones
+        if (driver != null) {
+            list = list.filter { GeoMath.distanceKm(driver, it.center) <= radius.km }
+        }
+        if (settings.showOnlyHotZones) {
+            list = list.filter { it.coefficient >= settings.minCoefficientAlert }
+        }
+        return list
     }
 
     /**

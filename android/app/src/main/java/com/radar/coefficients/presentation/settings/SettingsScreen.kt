@@ -1,6 +1,9 @@
 package com.radar.coefficients.presentation.settings
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,10 +30,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.radar.coefficients.domain.model.DisplayCurrency
 import com.radar.coefficients.domain.model.UserSettings
 import com.radar.coefficients.domain.model.VehicleClass
 import com.radar.coefficients.domain.repository.SettingsRepository
 import com.radar.coefficients.domain.util.DataStatusLabels
+import com.radar.coefficients.domain.util.MoneyFormatter
 import com.radar.coefficients.presentation.components.DisclaimerBanner
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -50,10 +55,11 @@ class SettingsViewModel @Inject constructor(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val currency = settings.displayCurrency
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(title = { Text("Настройки", fontWeight = FontWeight.Bold) })
@@ -63,6 +69,49 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
+            Section("Валюта (суммы на экране)")
+            Text(
+                "По умолчанию — рубли ₽. Можно сменить; конвертация ориентировочная.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    DisplayCurrency.RUB,
+                    DisplayCurrency.KZT,
+                    DisplayCurrency.BYN,
+                    DisplayCurrency.USD,
+                    DisplayCurrency.EUR,
+                    DisplayCurrency.AUTO
+                ).forEach { cur ->
+                    FilterChip(
+                        selected = currency == cur,
+                        onClick = { viewModel.update { it.copy(displayCurrency = cur) } },
+                        label = {
+                            Text(
+                                when (cur) {
+                                    DisplayCurrency.RUB -> "₽ Рубли"
+                                    DisplayCurrency.KZT -> "₸ Тенге"
+                                    DisplayCurrency.BYN -> "Br BYN"
+                                    DisplayCurrency.USD -> "$ USD"
+                                    DisplayCurrency.EUR -> "€ EUR"
+                                    DisplayCurrency.AUTO -> "Как в городе"
+                                    else -> cur.titleRu
+                                },
+                                fontSize = 14.sp
+                            )
+                        }
+                    )
+                }
+            }
+            Text(
+                "Пример: ${MoneyFormatter.format(1250.0, currency)} · " +
+                    MoneyFormatter.format(350.0, currency, withPlus = true),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp
+            )
+
+            Spacer(Modifier.height(16.dp))
             Section("Уведомления")
             RowItem("Включить оповещения") {
                 Switch(
@@ -73,7 +122,9 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             Text("Мин. коэффициент: ×${"%.1f".format(settings.minCoefficientAlert)}", fontSize = 18.sp)
             Slider(
                 value = settings.minCoefficientAlert.toFloat(),
-                onValueChange = { v -> viewModel.update { it.copy(minCoefficientAlert = (v * 10).toInt() / 10.0) } },
+                onValueChange = { v ->
+                    viewModel.update { it.copy(minCoefficientAlert = (v * 10).toInt() / 10.0) }
+                },
                 valueRange = 1.1f..3.0f,
                 steps = 18
             )
@@ -87,14 +138,73 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             Text("Частота обновления: ${settings.refreshIntervalMinutes} мин", fontSize = 18.sp)
             Slider(
                 value = settings.refreshIntervalMinutes.toFloat(),
-                onValueChange = { v -> viewModel.update { it.copy(refreshIntervalMinutes = v.toInt()) } },
+                onValueChange = { v ->
+                    viewModel.update { it.copy(refreshIntervalMinutes = v.toInt()) }
+                },
                 valueRange = 1f..30f,
                 steps = 28
             )
+
+            Spacer(Modifier.height(16.dp))
+            Section("Фишки карты")
+            RowItem("Не гасить экран") {
+                Switch(
+                    checked = settings.keepScreenOn,
+                    onCheckedChange = { v -> viewModel.update { it.copy(keepScreenOn = v) } }
+                )
+            }
+            RowItem("Только горячие зоны") {
+                Switch(
+                    checked = settings.showOnlyHotZones,
+                    onCheckedChange = { v -> viewModel.update { it.copy(showOnlyHotZones = v) } }
+                )
+            }
             Text(
-                "Во время движения — только короткие уведомления, без сложных окон.",
+                "Скрывать зоны с кэфом ниже мин. (×${"%.1f".format(settings.minCoefficientAlert)})",
                 style = MaterialTheme.typography.bodySmall
             )
+            RowItem("Автообновление зон") {
+                Switch(
+                    checked = settings.autoRefreshEnabled,
+                    onCheckedChange = { v -> viewModel.update { it.copy(autoRefreshEnabled = v) } }
+                )
+            }
+            RowItem("Суммы на карте") {
+                Switch(
+                    checked = settings.showMoneyOnMap,
+                    onCheckedChange = { v -> viewModel.update { it.copy(showMoneyOnMap = v) } }
+                )
+            }
+            RowItem("Компактная подпись") {
+                Switch(
+                    checked = settings.compactDriverBubble,
+                    onCheckedChange = { v -> viewModel.update { it.copy(compactDriverBubble = v) } }
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Section("Смена")
+            val shiftOn = settings.shiftStartedAtEpochMs > 0
+            RowItem(if (shiftOn) "Смена идёт" else "Начать смену") {
+                Switch(
+                    checked = shiftOn,
+                    onCheckedChange = { on ->
+                        viewModel.update {
+                            if (on) it.copy(
+                                shiftStartedAtEpochMs = System.currentTimeMillis(),
+                                shiftZonesChecked = 0
+                            ) else it.copy(shiftStartedAtEpochMs = 0L, shiftZonesChecked = 0)
+                        }
+                    }
+                )
+            }
+            if (shiftOn) {
+                val mins = ((System.currentTimeMillis() - settings.shiftStartedAtEpochMs) / 60_000).toInt()
+                Text(
+                    "Длительность: ~$mins мин · зон просмотрено: ${settings.shiftZonesChecked}",
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
 
             Spacer(Modifier.height(16.dp))
             Section("Данные")
@@ -106,16 +216,53 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             }
             Text(
                 if (settings.demoModeEnabled) DataStatusLabels.DEMO_BANNER
-                else "Демо выключено: без разрешённого источника зоны могут быть пустыми",
+                else "Работает YaRaDaR Official API (встроенный движок)",
                 style = MaterialTheme.typography.bodyMedium
             )
 
             Spacer(Modifier.height(16.dp))
-            Section("Тарифы над машинкой на карте")
+            Section("Тарифы над машинкой")
             Text(
-                "Выберите, какие кэфы показывать над вашей позицией (Э, К, Д…).",
+                "Э, К, Д… — что гореть над вашей позицией",
                 style = MaterialTheme.typography.bodyMedium
             )
+            Spacer(Modifier.height(8.dp))
+            // Пресеты
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = settings.mapVisibleTariffs == setOf(
+                        VehicleClass.ECONOMY, VehicleClass.COMFORT, VehicleClass.CHILD
+                    ),
+                    onClick = {
+                        viewModel.update {
+                            it.copy(
+                                mapVisibleTariffs = setOf(
+                                    VehicleClass.ECONOMY,
+                                    VehicleClass.COMFORT,
+                                    VehicleClass.CHILD
+                                )
+                            )
+                        }
+                    },
+                    label = { Text("Э+К+Д") }
+                )
+                FilterChip(
+                    selected = settings.mapVisibleTariffs.size == VehicleClass.configurable.size,
+                    onClick = {
+                        viewModel.update {
+                            it.copy(mapVisibleTariffs = VehicleClass.configurable.toSet())
+                        }
+                    },
+                    label = { Text("Все тарифы") }
+                )
+                FilterChip(
+                    selected = settings.mapVisibleTariffs == setOf(VehicleClass.ECONOMY),
+                    onClick = {
+                        viewModel.update { it.copy(mapVisibleTariffs = setOf(VehicleClass.ECONOMY)) }
+                    },
+                    label = { Text("Только Э") }
+                )
+            }
             Spacer(Modifier.height(8.dp))
             VehicleClass.configurable.chunked(2).forEach { row ->
                 Row(modifier = Modifier.fillMaxWidth()) {
@@ -145,12 +292,6 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                     if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
-            Text(
-                "Сейчас: " + settings.mapVisibleTariffs
-                    .sortedBy { VehicleClass.configurable.indexOf(it) }
-                    .joinToString(", ") { "${it.shortLabel} (${it.displayNameRu})" },
-                style = MaterialTheme.typography.labelLarge
-            )
 
             Spacer(Modifier.height(16.dp))
             Section("Класс авто для расчёта цены")
@@ -171,24 +312,32 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             }
 
             Spacer(Modifier.height(16.dp))
-            Section("Расчёт выгоды")
-            Text("Стоимость топлива: ${settings.fuelCostPerKm} / км", fontSize = 18.sp)
+            Section("Расчёт выгоды (${currency.symbol})")
+            Text(
+                "Топливо: ${MoneyFormatter.format(settings.fuelCostPerKm, currency)} / км",
+                fontSize = 18.sp
+            )
             Slider(
                 value = settings.fuelCostPerKm.toFloat(),
                 onValueChange = { v -> viewModel.update { it.copy(fuelCostPerKm = v.toDouble()) } },
                 valueRange = 0f..30f
             )
-            Text("Стоимость времени: ${settings.timeCostPerMinute} / мин", fontSize = 18.sp)
+            Text(
+                "Время: ${MoneyFormatter.format(settings.timeCostPerMinute, currency)} / мин",
+                fontSize = 18.sp
+            )
             Slider(
                 value = settings.timeCostPerMinute.toFloat(),
-                onValueChange = { v -> viewModel.update { it.copy(timeCostPerMinute = v.toDouble()) } },
+                onValueChange = { v ->
+                    viewModel.update { it.copy(timeCostPerMinute = v.toDouble()) }
+                },
                 valueRange = 0f..30f
             )
 
             Spacer(Modifier.height(24.dp))
             Text(
                 "Все суммы приблизительные. Приложение не гарантирует доход и не является " +
-                    "официальным продуктом Яндекса. Закрытые API и перехват трафика не используются.",
+                    "официальным продуктом Яндекса.",
                 style = MaterialTheme.typography.bodySmall
             )
         }

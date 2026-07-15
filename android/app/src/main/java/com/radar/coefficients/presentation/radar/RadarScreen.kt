@@ -33,6 +33,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.radar.coefficients.domain.model.RadarSortMode
 import com.radar.coefficients.domain.util.DataStatusLabels
+import com.radar.coefficients.domain.util.MoneyFormatter
 import com.radar.coefficients.presentation.components.CoefficientBadge
 import com.radar.coefficients.presentation.components.DataStatusChip
 import com.radar.coefficients.presentation.components.DisclaimerBanner
@@ -46,6 +47,8 @@ fun RadarScreen(
     viewModel: RadarViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val currency = state.settings.displayCurrency
+    val cityCur = state.city?.currencyCode ?: "RUB"
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
@@ -121,7 +124,13 @@ fun RadarScreen(
                                 }
                                 Spacer(Modifier.height(10.dp))
                                 Text(
-                                    "Выгода: ${"%.0f".format(score.expectedNetBenefit)} ${state.city?.currencyCode ?: ""}",
+                                    "Выгода: " + MoneyFormatter.format(
+                                        score.expectedNetBenefit,
+                                        currency,
+                                        cityCur,
+                                        cityCur,
+                                        withPlus = true
+                                    ),
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 20.sp
                                 )
@@ -130,7 +139,31 @@ fun RadarScreen(
                                     "В пути: ~${score.travelTimeWithTrafficMinutes ?: score.travelTimeMinutes} мин" +
                                         if (score.travelTimeWithTrafficMinutes == null) " (без пробок)" else ""
                                 )
-                                Text("Доп. доход (ориент.): ${"%.0f".format(score.expectedGrossExtra)}")
+                                Text(
+                                    "Доп. доход: " + MoneyFormatter.format(
+                                        score.expectedGrossExtra, currency, cityCur, cityCur
+                                    )
+                                )
+                                val tMin = (score.travelTimeWithTrafficMinutes ?: score.travelTimeMinutes)
+                                    .coerceAtLeast(1)
+                                val hourly = score.expectedNetBenefit * (60.0 / tMin)
+                                Text(
+                                    "Темп: " + MoneyFormatter.formatPerHour(hourly, currency, cityCur, cityCur),
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                                // кэфы по тарифам
+                                val byClass = score.zone.coefficientsByClass
+                                if (byClass.isNotEmpty()) {
+                                    Text(
+                                        byClass.entries
+                                            .sortedBy { it.key.ordinal }
+                                            .take(4)
+                                            .joinToString(" · ") {
+                                                "${it.key.shortLabel} ×${"%.1f".format(it.value)}"
+                                            },
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
                                 if (!score.commissionKnown) {
                                     Text(
                                         "Комиссия не учтена: данные отсутствуют",

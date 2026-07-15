@@ -20,7 +20,22 @@ data class UserSettings(
      * Какие тарифы показывать над машинкой на карте.
      * По умолчанию: Эконом, Комфорт, Детский.
      */
-    val mapVisibleTariffs: Set<VehicleClass> = DEFAULT_MAP_TARIFFS
+    val mapVisibleTariffs: Set<VehicleClass> = DEFAULT_MAP_TARIFFS,
+    /** Валюта отображения сумм (по умолчанию рубли). */
+    val displayCurrency: DisplayCurrency = DisplayCurrency.RUB,
+    /** Не гасить экран на карте (удобно за рулём). */
+    val keepScreenOn: Boolean = true,
+    /** На карте только «горячие» зоны (кэф ≥ мин. для уведомлений). */
+    val showOnlyHotZones: Boolean = false,
+    /** Автообновление зон на карте. */
+    val autoRefreshEnabled: Boolean = true,
+    /** Показывать ориентир. выгоду в ₽ на карточке зоны. */
+    val showMoneyOnMap: Boolean = true,
+    /** Компактная подпись над машинкой (в одну строку). */
+    val compactDriverBubble: Boolean = false,
+    /** Счётчик смены: старт epoch ms, 0 = не начата. */
+    val shiftStartedAtEpochMs: Long = 0L,
+    val shiftZonesChecked: Int = 0
 ) {
     companion object {
         val DEFAULT_MAP_TARIFFS: Set<VehicleClass> = setOf(

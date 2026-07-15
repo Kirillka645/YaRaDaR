@@ -6,9 +6,11 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.radar.coefficients.domain.model.DisplayCurrency
 import com.radar.coefficients.domain.model.UserSettings
 import com.radar.coefficients.domain.model.VehicleClass
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -40,6 +42,14 @@ class SettingsDataStore @Inject constructor(
         val favorites = stringSetPreferencesKey("favorites")
         val recents = stringPreferencesKey("recents")
         val mapTariffs = stringSetPreferencesKey("map_visible_tariffs")
+        val displayCurrency = stringPreferencesKey("display_currency")
+        val keepScreenOn = booleanPreferencesKey("keep_screen_on")
+        val onlyHot = booleanPreferencesKey("only_hot_zones")
+        val autoRefresh = booleanPreferencesKey("auto_refresh")
+        val showMoney = booleanPreferencesKey("show_money_map")
+        val compactBubble = booleanPreferencesKey("compact_bubble")
+        val shiftStart = longPreferencesKey("shift_start")
+        val shiftZones = intPreferencesKey("shift_zones")
     }
 
     val settingsFlow: Flow<UserSettings> = context.dataStore.data.map { it.toSettings() }
@@ -73,6 +83,14 @@ class SettingsDataStore @Inject constructor(
             prefs[Keys.favorites] = next.favoriteCityIds
             prefs[Keys.recents] = next.recentCityIds.joinToString(",")
             prefs[Keys.mapTariffs] = next.mapVisibleTariffs.map { it.name }.toSet()
+            prefs[Keys.displayCurrency] = next.displayCurrency.code
+            prefs[Keys.keepScreenOn] = next.keepScreenOn
+            prefs[Keys.onlyHot] = next.showOnlyHotZones
+            prefs[Keys.autoRefresh] = next.autoRefreshEnabled
+            prefs[Keys.showMoney] = next.showMoneyOnMap
+            prefs[Keys.compactBubble] = next.compactDriverBubble
+            prefs[Keys.shiftStart] = next.shiftStartedAtEpochMs
+            prefs[Keys.shiftZones] = next.shiftZonesChecked
         }
     }
 
@@ -101,7 +119,15 @@ class SettingsDataStore @Inject constructor(
             lastKnownLongitude = this[Keys.lastLon],
             favoriteCityIds = this[Keys.favorites] ?: emptySet(),
             recentCityIds = recents,
-            mapVisibleTariffs = mapTariffs
+            mapVisibleTariffs = mapTariffs,
+            displayCurrency = DisplayCurrency.fromCode(this[Keys.displayCurrency] ?: "RUB"),
+            keepScreenOn = this[Keys.keepScreenOn] ?: true,
+            showOnlyHotZones = this[Keys.onlyHot] ?: false,
+            autoRefreshEnabled = this[Keys.autoRefresh] ?: true,
+            showMoneyOnMap = this[Keys.showMoney] ?: true,
+            compactDriverBubble = this[Keys.compactBubble] ?: false,
+            shiftStartedAtEpochMs = this[Keys.shiftStart] ?: 0L,
+            shiftZonesChecked = this[Keys.shiftZones] ?: 0
         )
     }
 }
